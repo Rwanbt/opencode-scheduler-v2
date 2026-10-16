@@ -1,0 +1,45 @@
+{
+  "name": "opencode-scheduler-v2",
+  "version": "0.1.0",
+  "description": "OpenCode v2 plugin adapter for opencode-scheduler (cron/launchd/systemd scheduled jobs). Runs the unchanged v1 engine on OpenCode 2.x.",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "opencode-v2",
+    "scheduler",
+    "cron",
+    "plugin"
+  ],
+  "homepage": "https://github.com/roboalchemist/opencode-scheduler-v2#readme",
+  "bugs": {
+    "url": "https://github.com/roboalchemist/opencode-scheduler-v2/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/roboalchemist/opencode-scheduler-v2.git"
+  },
+  "license": "MIT",
+  "author": "roboalchemist",
+  "type": "module",
+  "main": "opencode-scheduler-v2.ts",
+  "exports": {
+    ".": "./opencode-scheduler-v2.ts",
+    "./server": "./opencode-scheduler-v2.ts"
+  },
+  "files": [
+    "opencode-scheduler-v2.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "opencode-scheduler": "^1.3.0",
+    "zod": "^4.1.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}

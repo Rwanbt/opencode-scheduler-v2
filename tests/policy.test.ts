@@ -1,8 +1,14 @@
-import { describe, test, expect } from "bun:test"
+import { describe, test, expect, afterAll } from "bun:test"
 import path from "node:path"
+import { mkdtempSync, mkdirSync, symlinkSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { assertProjectToolScope } from "../src/policy"
-const project = path.resolve("workspace-a")
-const foreign = path.resolve("workspace-b")
+const sandbox = mkdtempSync(path.join(tmpdir(), "scheduler-scope-check-"))
+const project = path.join(sandbox, "workspace-a")
+const foreign = path.join(sandbox, "workspace-b")
+mkdirSync(project)
+mkdirSync(foreign)
+afterAll(() => rmSync(sandbox, { recursive: true, force: true }))
 
 describe("native project capability boundary", () => {
   test("scoped reads and tool operations are admitted", () => {
@@ -25,5 +31,20 @@ describe("native project capability boundary", () => {
     expect(() => assertProjectToolScope("schedule_job", {}, "relative")).toThrow()
     expect(() => assertProjectToolScope("schedule_job", null, project)).toThrow()
     expect(() => assertProjectToolScope("schedule_job", ["oops"], project)).toThrow()
+  })
+  test("resolves symbolic links and rejects foreign or missing workspace authority", () => {
+    const alias = path.join(sandbox, "alias")
+    symlinkSync(foreign, alias, process.platform === "win32" ? "junction" : "dir")
+    expect(() => assertProjectToolScope("schedule_job", { workdir: alias }, project)).toThrow(/outside/)
+    expect(() => assertProjectToolScope("schedule_job", { workdir: project }, alias)).toThrow(/outside/)
+    expect(() => assertProjectToolScope("schedule_job", { workdir: project }, path.join(sandbox, "missing"))).toThrow(/no longer reachable/)
+  })
+  test("prevents unbounded or absurd duration in native scheduled jobs", () => {
+    for (const name of ["schedule_job", "update_job"]) {
+      for (const invalid of [0, -1, 3601, NaN, Infinity, "3600"]) {
+        expect(() => assertProjectToolScope(name, { timeoutSeconds: invalid }, project)).toThrow(/timeout/)
+      }
+      expect(() => assertProjectToolScope(name, { timeoutSeconds: 3600 }, project)).not.toThrow()
+    }
   })
 })

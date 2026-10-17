@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { runInProject, projectDirectory } from "../src/scope"
 import SchedulerPluginV2 from "../src/plugin"
 import path from "node:path"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 
 describe("OpenCode 2 plugin boundary", () => {
   test("project identity is per async request (not process.cwd)", async () => {
@@ -48,7 +50,8 @@ describe("OpenCode 2 plugin boundary", () => {
 
   test("real V2 tool wrappers deny cross-project side effects before engine entry", async () => {
     const registered: Record<string, {execute: (args: unknown, context: unknown) => Promise<unknown>}> = {}
-    const home = path.resolve("registered-project")
+    const home = mkdtempSync(path.join(tmpdir(), "scheduler-v2-attested-"))
+    try {
     await SchedulerPluginV2.setup({ directory: home, tool: { transform: async (callback) => callback({
       add: (tool) => { registered[tool.name] = tool },
     }) } })
@@ -59,4 +62,5 @@ describe("OpenCode 2 plugin boundary", () => {
     await expect(registered.list_jobs.execute({ includeLegacy: "yes" }, {})).rejects.toThrow(/Cross-project/)
     await expect(registered.schedule_job.execute({ name: "unsafe", schedule: "0 9 * * *", workdir: path.resolve("foreign") }, {}))
       .rejects.toThrow(/active project/)
+    } finally { rmSync(home, { recursive: true, force: true }) }
   })})

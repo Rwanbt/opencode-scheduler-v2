@@ -1112,7 +1112,7 @@ function createLaunchdPlist(job: Job): string {
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>${enhancedPath}</string>
+    <string>${escapePlistString(enhancedPath)}</string>
   </dict>
 
   <key>ProgramArguments</key>
@@ -1144,30 +1144,23 @@ function installLaunchdJob(job: Job): void {
   ensureDir(scopeLogsDir(scopeId))
   ensureSupervisorScript()
 
-  const legacyLabel = `${LAUNCHD_PREFIX}.${job.slug}`
-  const legacyPlistPath = join(LAUNCH_AGENTS_DIR, `${legacyLabel}.plist`)
-
   const label = `${LAUNCHD_PREFIX}.${scopeId}.${job.slug}`
   const plistPath = join(LAUNCH_AGENTS_DIR, `${label}.plist`)
 
-  // Unload if exists
-  try {
-    execSync(`launchctl unload "${plistPath}" 2>/dev/null`, { stdio: "ignore" })
-  } catch {}
-
-  // Also unload legacy label (pre-scope)
-  if (existsSync(legacyPlistPath)) {
-    try {
-      execSync(`launchctl unload "${legacyPlistPath}" 2>/dev/null`, { stdio: "ignore" })
-    } catch {}
+  // Never reinterpret a LaunchAgent path with a shell. A user home path can
+  // legitimately contain quotes, dollar signs or shell metacharacters.
+  if (existsSync(plistPath)) {
+    execFileSync("launchctl", ["unload", plistPath], { stdio: "ignore" })
   }
+  // The old unscoped label may belong to another project. Never unload it
+  // implicitly: legacy migration requires explicit owner reconciliation.
 
   // Write plist
   const plist = createLaunchdPlist(job)
   writeFileSync(plistPath, plist)
 
   // Load
-  execSync(`launchctl load "${plistPath}"`)
+  execFileSync("launchctl", ["load", plistPath], { stdio: "ignore" })
 }
 
 function uninstallLaunchdJob(job: Job): void {
@@ -1175,18 +1168,11 @@ function uninstallLaunchdJob(job: Job): void {
   const scopedLabel = `${LAUNCHD_PREFIX}.${scopeId}.${job.slug}`
   const scopedPlistPath = join(LAUNCH_AGENTS_DIR, `${scopedLabel}.plist`)
 
-  const legacyLabel = `${LAUNCHD_PREFIX}.${job.slug}`
-  const legacyPlistPath = join(LAUNCH_AGENTS_DIR, `${legacyLabel}.plist`)
-
-  for (const plistPath of [scopedPlistPath, legacyPlistPath]) {
-    if (!existsSync(plistPath)) continue
-    try {
-      execSync(`launchctl unload "${plistPath}"`, { stdio: "ignore" })
-    } catch {}
-    try {
-      unlinkSync(plistPath)
-    } catch {}
-  }
+  if (!existsSync(scopedPlistPath)) return
+  // Failure to unload is not proof that the OS job is absent. Keep the plist
+  // intact so a maintainer can reconcile an unknown launchd owner safely.
+  execFileSync("launchctl", ["unload", scopedPlistPath], { stdio: "ignore" })
+  unlinkSync(scopedPlistPath)
 }
 
 // === SYSTEMD (Linux) ===
@@ -2721,7 +2707,7 @@ export const SchedulerPlugin: Plugin = async () => {
               source: args.source,
               workdir,
               attachUrl,
-              timeoutSeconds: args.timeoutSeconds,
+               timeoutSeconds: args.timeoutSeconds ?? 1800,
               createdAt: new Date().toISOString(),
             }
 

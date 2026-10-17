@@ -28,7 +28,8 @@ All four jobs passed on SHA `c8b8ff22f530cf1d1be2f069ba73787104b30f13`. This con
 - **Crash/failure injection:** `schtasks /Create` partially succeeds then errors; `schtasks /Delete` permission denied; process killed between manifest transitions; safe replay and recovery; stale locks require human intervention by design.
 - **Model permission and cost:** a real scheduled OpenCode model invocation with no interactive prompt, secrets/permission restrictions, and bounded time/token/cost budgets; not attempted because it could consume live credits or invoke destructive tools.
 - **Distribution and rollback:** side-by-side collision with legacy `different-ai/opencode-scheduler` 1.3.0, migration of prior unscoped Windows jobs, package install/update/uninstall in a real Desktop without touching Goal/Loop, and deterministic rollback from one release to another.
-- **macOS launchd:** not included in the current Windows+Ubuntu CI, so cross-platform production-ready must not be claimed.
+- **macOS launchd:** a disposable GitHub macOS LaunchAgent start/log/unload smoke test has been added, pending exact-SHA results. Sleep/reboot and real unattended inference remain unqualified.
+- **Unattended security boundary:** runtime now defaults to 30 minutes, rejects explicit unbounded Windows runs and resolves symlinked workspaces before admitting native operations. There is **no hard token/cost budget authority**, nor a guarantee that an imported provider/agent cannot disclose data through read-capable tools.
 
 ### Operational controls
 

@@ -33,6 +33,8 @@ jobs:
         run: node scripts/windows-schtasks-smoke.mjs
       - if: runner.os == 'Windows'
         run: node scripts/windows-engine-e2e.mjs
+      - if: runner.os == 'macOS'
+        run: node scripts/macos-launchd-e2e.mjs
       - run: npm pack --dry-run --json --ignore-scripts
   native-opencode-v2:
     strategy:

@@ -112,6 +112,11 @@ if (!invocation || typeof invocation.command !== "string" || !path.win32.isAbsol
   finish("failed", 2, "missing or unsafe OpenCode invocation");
 } else if (!job.workdir || !path.win32.isAbsolute(job.workdir) || !fs.existsSync(job.workdir)) {
   finish("failed", 2, "missing absolute job workdir");
+} else if (!Number.isSafeInteger(job.timeoutSeconds ?? 1800) ||
+    (job.timeoutSeconds ?? 1800) < 1 || (job.timeoutSeconds ?? 1800) > 3600) {
+  // A corrupted/legacy job must not run without a watchdog. Missing duration
+  // is backward compatible but bounded; an explicit zero remains forbidden.
+  finish("failed", 2, "unattended timeout must be 1–3600 seconds");
 } else {
   // Noninteractive policy: deny questions, write tools, and shells by default.
   // A user can create more privileged jobs only through an explicit change.
@@ -141,7 +146,7 @@ if (!invocation || typeof invocation.command !== "string" || !path.win32.isAbsol
     };
     child.once("error", (error) => { childError = error.message; childCode = 1; });
     child.once("close", (code) => { childClosed = true; childCode = code ?? 1; settle(); });
-    const timeout = Number(job.timeoutSeconds);
+    const timeout = job.timeoutSeconds ?? 1800;
     if (Number.isFinite(timeout) && timeout > 0) {
       const timer = setTimeout(() => {
         if (finished || childClosed || !child?.pid) return;

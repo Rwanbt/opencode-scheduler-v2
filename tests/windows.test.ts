@@ -80,6 +80,30 @@ describe("Windows scheduler without OS task changes", () => {
       expect(readFileSync(locked, "utf8")).toBe("not JSON")
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
+  test("legacy missing timeout is bounded and explicit zero rejects without spawning", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "rwanbt-scheduler-duration-"))
+    try {
+      const jobs = path.join(root, "scheduler", "scopes", "duration", "jobs")
+      mkdirSync(jobs, { recursive: true })
+      const exe = path.join(root, "opencode.exe")
+      linkSync(process.execPath, exe)
+      const file = path.join(jobs, "one.json")
+      const contents = { scopeId: "duration", slug: "one", workdir: root,
+        invocation: { command: exe, args: ["-e", "console.log('SHOULD_NOT_EXECUTE')", "run", "--", "test"] },
+        timeoutSeconds: 0 }
+      writeFileSync(file, JSON.stringify(contents))
+      const runner = path.resolve("dist/windows-runner.cjs")
+      const rejected = spawnSync(process.execPath, [runner, file], { timeout: 5000, encoding: "utf8" })
+      expect(rejected.status).toBe(2)
+      expect(readFileSync(path.join(root, "logs", "scheduler", "duration", "one.log"), "utf8"))
+        .not.toContain("SHOULD_NOT_EXECUTE")
+      expect(existsSync(path.join(root, "scheduler", "scopes", "duration", "locks", "one.lock"))).toBe(false)
+      writeFileSync(file, JSON.stringify({ ...contents, timeoutSeconds: undefined }))
+      const legacy = spawnSync(process.execPath, [runner, file], { timeout: 5000 })
+      expect(legacy.status).toBe(0)
+      expect(JSON.parse(readFileSync(file, "utf8")).lastRunStatus).toBe("success")
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
   test("rejects a forged cross-scope job without execution", () => {
     const root = mkdtempSync(path.join(tmpdir(), "rwanbt-scheduler-forged-"))
     try {

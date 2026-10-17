@@ -24,6 +24,7 @@ const jobsDir = path.join(scopeRoot, "jobs")
 const locksDir = path.join(scopeRoot, "locks")
 const jobPath = path.join(jobsDir, slug + ".json")
 const lockPath = path.join(locksDir, slug + ".json")
+const logPath = path.join(home, ".config", "opencode", "logs", "scheduler", scope, slug + ".log")
 
 const env = {
   ...process.env, HOME: home, PROOF: proof, PERMISSIONS: permissions,
@@ -118,7 +119,8 @@ try {
   writeFileSync(lockPath, JSON.stringify({ pid: 99999999, runId: "stale" }))
   const stale = run()
   assert.notEqual(stale.status, 0)
-  assert.match(stale.stderr, /manual reconciliation/)
+  // The supervisor redirects stderr to the durable scoped log before locking.
+  assert.match(readFileSync(logPath, "utf8"), /manual reconciliation/)
   assert.equal(existsSync(lockPath), true)
   assert.equal(existsSync(proof), false)
   rmSync(lockPath)

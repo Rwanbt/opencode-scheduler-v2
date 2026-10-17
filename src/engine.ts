@@ -130,10 +130,12 @@ function currentScopeId(): string {
   return deriveScopeId(projectDirectory())
 }
 
-const SUPERVISOR_SCRIPT = `#!/usr/bin/perl
+export const SUPERVISOR_SCRIPT = `#!/usr/bin/perl
 use strict;
 use warnings;
 use JSON::PP;
+use Errno qw(EEXIST);
+use Fcntl qw(O_WRONLY O_CREAT O_EXCL);
 use File::Basename qw(dirname);
 use File::Path qw(make_path);
 use POSIX qw(setsid strftime);
@@ -176,8 +178,19 @@ sub append_jsonl {
 
 sub pid_alive {
   my ($pid) = @_;
-  return 0 if !$pid;
+  return 0 if !defined($pid) || $pid !~ /^\\d+$/ || $pid < 1;
   return kill 0, $pid;
+}
+
+sub release_owned_lock {
+  my ($path, $run_id) = @_;
+  my $owner = eval { read_json($path) };
+  if (-l $path || !$owner || ref($owner) ne 'HASH' ||
+      ($owner->{pid} // '') ne $$ || ($owner->{runId} // '') ne $run_id) {
+    warn "Lock ownership changed; manual reconciliation required: $path\\n";
+    return;
+  }
+  unlink $path or warn "Failed to remove own lock $path: $!\\n";
 }
 
 sub random_id {
@@ -189,15 +202,33 @@ my $job_path = shift @ARGV;
 if (!$job_path) { die "usage: supervisor.pl <job.json>\n"; }
 
 my $job = read_json($job_path);
+if (!$job || ref($job) ne 'HASH') { die "Invalid job document\\n"; }
 my $scope_id = $job->{scopeId} || "";
 my $slug = $job->{slug} || "";
-if (!$scope_id || !$slug) { die "job missing scopeId/slug\n"; }
+if ($scope_id !~ /^[a-z0-9]+(?:-[a-z0-9]+)*$/ ||
+    $slug !~ /^[a-z0-9]+(?:-[a-z0-9]+)*$/) {
+  die "Invalid scoped job identity\\n";
+}
 
 my $home = $ENV{HOME} || "";
 if (!$home) { die "HOME is not set\n"; }
 
 my $config_root = "$home/.config/opencode";
 my $scheduler_root = "$config_root/scheduler/scopes/$scope_id";
+my $expected_job_path = "$scheduler_root/jobs/$slug.json";
+if ($job_path ne $expected_job_path || !-f $job_path || -l $job_path) {
+  die "Job path does not match scoped storage identity\\n";
+}
+# Fail closed on symlinked scheduler storage, including the scope directory.
+for my $dir (dirname($job_path), $scheduler_root,
+             dirname($scheduler_root), dirname(dirname($scheduler_root))) {
+  die "Symlinked scheduler directory denied\\n" if -l $dir;
+}
+
+my $timeout = exists $job->{timeoutSeconds} ? $job->{timeoutSeconds} : 1800;
+if (!defined($timeout) || ref($timeout) || $timeout !~ /^[1-9][0-9]{0,3}$/ || $timeout > 3600) {
+  die "Unattended timeout must be 1-3600 seconds\\n";
+}
 my $locks_dir = "$scheduler_root/locks";
 my $runs_dir = "$scheduler_root/runs";
 my $logs_dir = "$config_root/logs/scheduler/$scope_id";
@@ -213,7 +244,9 @@ select STDOUT; $| = 1;
 select STDERR; $| = 1;
 
 my $lock_path = "$locks_dir/$slug.json";
-if (-e $lock_path) {
+my $lock_fh;
+if (!sysopen($lock_fh, $lock_path, O_WRONLY | O_CREAT | O_EXCL, 0600)) {
+  die "Failed to acquire lock $lock_path: $!\\n" unless $! == EEXIST;
   my $lock = eval { read_json($lock_path) };
   my $pid = ($lock && ref($lock) eq 'HASH') ? ($lock->{pid} || 0) : 0;
   if (pid_alive($pid)) {
@@ -221,14 +254,16 @@ if (-e $lock_path) {
     print "\n=== Scheduled run skipped (already running pid=$pid) $now ===\n";
     exit 0;
   }
-  unlink $lock_path;
+  die "Stale or unreadable lock; manual reconciliation required: $lock_path\\n";
 }
 
 my $run_id = time() . "-" . random_id();
 my $started_at = iso_now();
 my $t0 = time();
 
-write_json_atomic($lock_path, { pid => $$, startedAt => $started_at, runId => $run_id });
+print $lock_fh JSON::PP->new->utf8->canonical->encode({ pid => $$, startedAt => $started_at, runId => $run_id })
+  or die "Failed to write atomic lock: $!\\n";
+close $lock_fh or die "Failed to close atomic lock: $!\\n";
 
 # Update job metadata: running
 $job->{lastRunAt} = $started_at;
@@ -240,7 +275,7 @@ $job->{updatedAt} = $started_at;
 write_json_atomic($job_path, $job);
 
 # Force non-interactive scheduled runs
-my $perm = { question => "deny" };
+my $perm = { question => "deny", edit => "deny", bash => "deny", external_directory => "deny" };
 if ($ENV{OPENCODE_PERMISSION}) {
   my $existing = eval { JSON::PP->new->decode($ENV{OPENCODE_PERMISSION}) };
   if ($existing && ref($existing) eq 'HASH') {
@@ -260,7 +295,7 @@ if (!$inv || ref($inv) ne 'HASH' || !$inv->{command} || ref($inv->{args}) ne 'AR
   $job->{lastRunError} = "job missing invocation";
   $job->{updatedAt} = $now;
   write_json_atomic($job_path, $job);
-  unlink $lock_path;
+  release_owned_lock($lock_path, $run_id);
   exit 1;
 }
 
@@ -268,9 +303,6 @@ my $command = $inv->{command};
 my @args = @{ $inv->{args} };
 
 my $workdir = $job->{workdir} || $home;
-
-my $timeout = $job->{timeoutSeconds};
-$timeout = undef if defined($timeout) && $timeout !~ /^\\d+$/;
 
 my $timed_out = 0;
 my $child_pid = fork();
@@ -281,18 +313,19 @@ if (!defined $child_pid) {
   $job->{lastRunError} = "fork failed";
   $job->{updatedAt} = $now;
   write_json_atomic($job_path, $job);
-  unlink $lock_path;
+  release_owned_lock($lock_path, $run_id);
   exit 1;
 }
 
 if ($child_pid == 0) {
   chdir $workdir or die "Failed to chdir to $workdir: $!\n";
-  eval { setsid(); };
+  my $sid = setsid();
+  die "Failed to establish isolated process group: $!\n" if !defined($sid) || $sid < 0;
   exec { $command } $command, @args;
   die "Failed to exec $command: $!\n";
 }
 
-if (defined($timeout) && $timeout > 0) {
+if ($timeout > 0) {
   local $SIG{ALRM} = sub {
     $timed_out = 1;
     my $now = iso_now();
@@ -351,7 +384,7 @@ append_jsonl("$runs_dir/$slug.jsonl", {
   logPath => $log_path,
 });
 
-unlink $lock_path;
+release_owned_lock($lock_path, $run_id);
 print "\n=== Finished $finished_at status=$final_status exitCode=$exit_code durationMs=$duration_ms ===\n";
 exit($exit_code);
 `
@@ -2277,7 +2310,9 @@ function buildRunEnvironment(): NodeJS.ProcessEnv {
   //
   // - `question: deny` ensures scheduled runs never block waiting for a prompt.
   // - We merge this with any existing OPENCODE_PERMISSION JSON if present.
-  const basePolicy: Record<string, unknown> = { question: "deny" }
+  const basePolicy: Record<string, unknown> = {
+    question: "deny", edit: "deny", bash: "deny", external_directory: "deny",
+  }
 
   const mergedPolicy = (() => {
     const raw = process.env.OPENCODE_PERMISSION
@@ -2616,7 +2651,7 @@ export const SchedulerPlugin: Plugin = async () => {
             timeoutSeconds: tool.schema
               .number()
               .optional()
-              .describe("Optional: max runtime in seconds (0 disables)."),
+              .describe("Optional: bounded unattended runtime, 1–3600 seconds (default 1800)."),
             format: tool.schema.string().optional().describe("Optional: output format ('text' or 'json')."),
           },
 
@@ -2997,7 +3032,7 @@ Commands:
             .describe("Updated run output format (default|json)"),
           port: tool.schema.number().optional().describe("Updated port (maps to --port)"),
 
-          timeoutSeconds: tool.schema.number().optional().describe("Updated timeout in seconds (0 disables)"),
+           timeoutSeconds: tool.schema.number().optional().describe("Updated unattended timeout, 1–3600 seconds"),
 
           workdir: tool.schema.string().optional().describe("Updated working directory"),
           attachUrl: tool.schema.string().optional().describe("Updated attach URL (set to empty to clear)"),

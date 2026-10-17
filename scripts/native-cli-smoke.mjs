@@ -74,4 +74,24 @@ try {
   }
   if (!active) throw new Error("Scheduler not active in official OpenCode 2.0.32 GET /api/plugin inventory")
   console.log("NATIVE_OPENCODE_2_0_32_PLUGIN_LOADED")
+  // Explicit rollback test. Only this isolated CI configuration is edited.
+  writeFileSync(path.join(directory, "opencode.jsonc"), JSON.stringify({ "$schema": "https://opencode.ai/config.json", plugins: [] }))
+  const reset = opencode("reload")
+  if (reset.status !== 0) throw new Error("Official OpenCode plugin configuration rollback failed")
+  let gone = false
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const reply = opencode("api", "GET", "/api/plugin")
+    if (reply.status === 0) {
+      let body
+      try { body = JSON.parse(reply.stdout) } catch {}
+      const items = Array.isArray(body?.data) ? body.data : []
+      if (items.length > 0 && !items.some((item) => item?.id === "rwanbt.scheduler.v2")) {
+        gone = true
+        break
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 400))
+  }
+  if (!gone) throw new Error("Removing the Scheduler plugin configuration did not unload it from the native server")
+  console.log("NATIVE_OPENCODE_2_0_32_PLUGIN_UNLOADED_ON_ROLLBACK")
 } finally { opencode("service", "stop"); try { unlinkSync(archive) } catch {} }

@@ -3,7 +3,7 @@ on:
   pull_request:
   push:
     branches:
-      - feat/windows-v2-scheduler-hardening
+      - main
   workflow_dispatch:
 permissions:
   contents: read
@@ -23,6 +23,7 @@ jobs:
           cache: npm
       - uses: oven-sh/setup-bun@v2
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run typecheck
       - run: npm run build
       - run: bun test tests/native-v2.test.ts tests/policy.test.ts tests/manifest.test.ts tests/windows-ref.test.ts tests/systemd.test.ts

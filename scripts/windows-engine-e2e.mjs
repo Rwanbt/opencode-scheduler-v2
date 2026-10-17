@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 
@@ -8,9 +8,10 @@ if (process.platform !== "win32" || process.env.GITHUB_ACTIONS !== "true") {
   throw new Error("Real engine/OS integration is permitted only on ephemeral GitHub Actions Windows runners")
 }
 const root = mkdtempSync(path.join(tmpdir(), "sve2e-"))
-const home = path.join(root, "h")
+// Use the actual ephemeral runner profile so schtasks sees the same home as the caller.
+const home = homedir()
 const workspace = path.join(root, "p")
-mkdirSync(home); mkdirSync(workspace)
+mkdirSync(workspace)
 process.env.USERPROFILE = home
 process.env.HOME = home
 process.env.APPDATA = path.join(home, "appdata")
@@ -84,6 +85,10 @@ try {
     }
   }
   if (typeof disposer === "function") await disposer()
-  if (!blocked) rmSync(root, { recursive: true, force: true })
+  if (!blocked) {
+    rmSync(root, { recursive: true, force: true })
+    // Only our uniquely scoped job and legacy test fixture, never other task data.
+    if (existsSync(legacyFile)) rmSync(legacyFile, { force: true })
+  }
   else { console.error(`E2E cleanup blocked; fixture retained: ${root}`); process.exitCode = 1 }
 }

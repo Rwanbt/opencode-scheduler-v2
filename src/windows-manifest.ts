@@ -48,5 +48,11 @@ export function confirmWindowsTask(manifest: WindowsManifest, name: string): Win
 }
 
 export function windowsTasksToDelete(manifest: WindowsManifest): string[] {
-  return [...new Set([...manifest.registered, ...(manifest.inFlight ? [manifest.inFlight] : [])])]
+  // A crash while /Create was in flight leaves ownership ambiguous: schtasks
+  // can report a conflicting pre-existing task with the same name. It is not
+  // safe to delete such a task based only on a name. Require reconciliation.
+  if (manifest.inFlight) {
+    throw new Error(`Windows task creation for ${manifest.inFlight} is unverified; manual reconciliation required`)
+  }
+  return [...manifest.registered]
 }

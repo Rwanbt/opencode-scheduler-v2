@@ -13,10 +13,10 @@ describe("durable Windows schtasks manifest recovery", () => {
     const intended = blank()
     expect(windowsTasksToDelete(intended)).toEqual([])
     const started = beginWindowsTask(intended, names[0])
-    expect(windowsTasksToDelete(started)).toEqual([names[0]])
+    expect(() => windowsTasksToDelete(started)).toThrow(/unverified/)
     const done = confirmWindowsTask(started, names[0])
     expect(windowsTasksToDelete(done)).toEqual([names[0]])
-    expect(windowsTasksToDelete(beginWindowsTask(done, names[1]))).toEqual(names)
+    expect(() => windowsTasksToDelete(beginWindowsTask(done, names[1]))).toThrow(/unverified/)
     expect(() => confirmWindowsTask(started, names[1])).toThrow()
     expect(() => beginWindowsTask(started, names[1])).toThrow()
   })
@@ -26,7 +26,7 @@ describe("durable Windows schtasks manifest recovery", () => {
     try {
       const partial = beginWindowsTask(blank(), names[0])
       saveWindowsManifest(file, partial)
-      expect(windowsTasksToDelete(loadWindowsManifest(file, "scope", "job", prefix))).toEqual([names[0]])
+      expect(() => windowsTasksToDelete(loadWindowsManifest(file, "scope", "job", prefix))).toThrow(/unverified/)
       expect(() => loadWindowsManifest(file, "foreign", "job", prefix)).toThrow()
       expect(() => loadWindowsManifest(file, "scope", "foreign", prefix)).toThrow()
       const corrupted = { ...partial, registered: ["\\OpenCode\\other-project"] }

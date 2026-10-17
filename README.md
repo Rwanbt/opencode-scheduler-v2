@@ -13,6 +13,7 @@ This fork ports Scheduler to **OpenCode 2.x** and includes a locally audited cop
 - **Linux/systemd portability:** fixes wildcard-weekday `OnCalendar` generation, resolves Perl without assuming `/usr/bin/perl`, and preserves environment-specific PATH entries (including Nix/NixOS).
 - **Native capability boundary:** cross-project locations, legacy/global enumeration, and global cleanup are denied for the project-scoped V2 plugin.\n- **No silent phantom tasks:** manifest captures intended Windows task names before registering them; uninstall only addresses matching scoped names. Partial failures retain the manifest and a visible failed job record. Ambiguous task ownership or status fails closed instead of bulk-deleting tasks.
 
+**Windows long-path note:** The scheduling command fails closed when `schtasks /TR` exceeds its platform limit; this fork uses a short hashed reference for each task but cannot guarantee compatibility with arbitrarily long Windows user profiles. For safety, an interrupted `/Create` that leaves an in-flight task reference is **never automatically deleted by task name**; manual reconciliation is required.
 The original `schedule_job`, `list_jobs`, `get_job`, `update_job`, `delete_job`, `run_job`, `job_logs` and maintenance tools remain available as **agent tools**, not slash commands. No changes to official OpenCode 2 binaries are required.
 
 ## Developer setup

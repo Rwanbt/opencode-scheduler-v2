@@ -22,6 +22,7 @@ import { createHash } from "node:crypto"
 import { delimiter } from "node:path"
 import { projectDirectory } from "./scope.js"
 import { windowsExecutable, windowsOpenCodeExecutable, windowsTaskAction } from "./windows.js"
+import { loadWindowsManifest, saveWindowsManifest, beginWindowsTask, confirmWindowsTask, windowsTasksToDelete } from "./windows-manifest.js"
 
 // Storage location - shared with other opencode tools
 const OPENCODE_CONFIG = join(homedir(), ".config", "opencode")
@@ -1043,7 +1044,7 @@ function cronToWindowsTaskDefinitions(job: Job): WindowsTaskDefinition[] {
   const command = buildWindowsTaskCommand(job)
 
   return plans.map((plan, index) => {
-    const args = ["/Create", "/F", "/TN", windowsTaskName(baseName, index, plans.length), "/TR", command, "/SC", plan.schedule]
+    const args = ["/Create", "/TN", windowsTaskName(baseName, index, plans.length), "/TR", command, "/SC", plan.schedule]
 
     if (plan.modifier) {
       args.push("/MO", plan.modifier)
@@ -1289,17 +1290,19 @@ function uninstallSystemdJob(job: Job): void {
 
 function installWindowsJob(job: Job): void {
   uninstallWindowsJob(job)
-  const taskDefinitions = cronToWindowsTaskDefinitions(job)
-  const taskManifest = windowsManifestPath(job)
-  ensureDir(dirname(taskManifest))
-  // Write before /Create to recover tasks after a crash mid-install.
-  writeFileSync(taskManifest, JSON.stringify({ scopeId: job.scopeId || deriveScopeId(job.workdir || homedir()),
-    slug: job.slug, names: taskDefinitions.map((task) => task.name) }, null, 2))
-  try {
-    for (const task of taskDefinitions) execFileSync("schtasks", task.args, { stdio: "ignore" })
-  } catch (error) {
-    // Retain the manifest on partial failure for explicit retry/cleanup.
-    throw error
+  const definitions = cronToWindowsTaskDefinitions(job)
+  const file = windowsManifestPath(job)
+  let state = { scopeId: job.scopeId || deriveScopeId(job.workdir || homedir()),
+    slug: job.slug, names: definitions.map((task) => task.name), registered: [] as string[], inFlight: null as string | null }
+  saveWindowsManifest(file, state)
+  for (const task of definitions) {
+    // Persist the in-flight task before calling schtasks: even if this host
+    // crashes after /Create but before recording success, no task is invisible.
+    state = beginWindowsTask(state, task.name)
+    saveWindowsManifest(file, state)
+    execFileSync("schtasks", task.args, { stdio: "ignore" })
+    state = confirmWindowsTask(state, task.name)
+    saveWindowsManifest(file, state)
   }
 }
 
@@ -1308,37 +1311,19 @@ function windowsManifestPath(job: Job): string {
 }
 
 function uninstallWindowsJob(job: Job): void {
-  const manifestPath = windowsManifestPath(job)
-  let candidates: string[]
-  if (existsSync(manifestPath)) {
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
-    const expected = `${WINDOWS_TASK_ROOT}\\${windowsTaskBaseName(job)}`
-    if (manifest.scopeId !== (job.scopeId || deriveScopeId(job.workdir || homedir())) ||
-        manifest.slug !== job.slug || !Array.isArray(manifest.names) ||
-        !manifest.names.every((name: unknown) => typeof name === "string" &&
-          (name === expected || /^-\d+$/.test(name.slice(expected.length)) && name.startsWith(expected)))) {
-      throw new Error("Invalid Windows task manifest; refusing to delete other owners' tasks")
-    }
-    candidates = manifest.names
-  } else {
-    // Only known scoped names; never bulk-delete 128 task variants or other
-    // workspaces' legacy unscoped tasks as the upstream implementation did.
-    candidates = cronToWindowsTaskDefinitions(job).map((task) => task.name)
+  const file = windowsManifestPath(job)
+  // Without our ownership manifest, never enumerate or overwrite another
+  // user's legacy task. /Create without /F now fails on collisions.
+  if (!existsSync(file)) return
+  const scope = job.scopeId || deriveScopeId(job.workdir || homedir())
+  const state = loadWindowsManifest(file, scope, job.slug, `${WINDOWS_TASK_ROOT}\\${windowsTaskBaseName(job)}`)
+  for (const name of windowsTasksToDelete(state)) {
+    try { execFileSync("schtasks", ["/Query", "/TN", name], { stdio: "ignore" }) }
+    catch { throw new Error(`Windows task ${name} cannot be verified; manifest preserved for manual reconciliation`) }
+    execFileSync("schtasks", ["/Delete", "/TN", name, "/F"], { stdio: "ignore" })
   }
-  for (const taskName of candidates) {
-    try { execFileSync("schtasks", ["/Query", "/TN", taskName], { stdio: "ignore" }) }
-    catch {
-      // With an existing manifest we cannot distinguish a missing task from
-      // access denial using schtasks' localized error text: keep it for manual
-      // review rather than dropping the only durable task reference.
-      if (existsSync(manifestPath)) throw new Error(`Windows task status unverifiable: ${taskName}`)
-      continue
-    }
-    execFileSync("schtasks", ["/Delete", "/TN", taskName, "/F"], { stdio: "ignore" })
-  }
-  if (existsSync(manifestPath)) unlinkSync(manifestPath)
+  unlinkSync(file)
 }
-
 // === CROSS-PLATFORM ===
 
 type SchedulerBackend = "launchd" | "systemd" | "schtasks" | "cron"

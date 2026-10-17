@@ -1,6 +1,7 @@
 import { z } from "zod"
 import SchedulerPlugin from "./engine.js"
 import { runInProject } from "./scope.js"
+import { assertProjectToolScope } from "./policy.js"
 
 type ToolEditor = { add(definition: {
   name: string
@@ -33,6 +34,7 @@ export const SchedulerPluginV2 = {
     const definitions = v1?.tool ?? {}
     await context.tool.transform((editor) => {
       for (const [name, definition] of Object.entries(definitions)) {
+        if (name === "cleanup_global") continue // Not an authorized project-scoped tool
         // Fail closed on untranslatable schemas. A permissive {} schema would
         // turn destructive scheduler tools into unvalidated inputs.
         const input = z.toJSONSchema(z.object(definition.args ?? {})) as Record<string, unknown>
@@ -44,6 +46,7 @@ export const SchedulerPluginV2 = {
           description: definition.description,
           input,
           execute: async (args, toolContext) => runInProject(project, async () => {
+            assertProjectToolScope(name, args, project)
             const result = await definition.execute(args as never, toolContext as never)
             if (typeof result === "string") return { content: result }
             if (result && typeof result === "object" && "output" in result && typeof result.output === "string") {

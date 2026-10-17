@@ -71,12 +71,12 @@ const save = (status, code, error) => {
     fs.renameSync(temp, jobPath);
   } catch (e) { write(`could not persist run status: ${e.message}`); }
 };
-const finish = (status, code, error) => {
+const finish = (status, code, error, releaseLock = true) => {
   if (finished) return;
   finished = true;
   save(status, code, error);
   write(`finished ${status} exit=${code} ${error ?? ""}`);
-  release();
+  if (releaseLock) release();
   output.end();
   process.exitCode = code ?? 1;
 };
@@ -106,15 +106,32 @@ if (!invocation || typeof invocation.command !== "string" || !path.win32.isAbsol
       windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout?.pipe(output, { end: false });
     child.stderr?.pipe(output, { end: false });
-    child.once("error", (error) => finish("failed", 1, error.message));
-    child.once("close", (code) => finish(code === 0 ? "success" : "failed", code ?? 1));
+    let timedOut = false;
+    let childClosed = false;
+    let killerClosed = true;
+    let killFailed = false;
+    let childCode = 1;
+    let childError;
+    const settle = () => {
+      if (!childClosed || !killerClosed) return;
+      finish(timedOut || childCode !== 0 ? "failed" : "success",
+        timedOut ? 124 : childCode, timedOut ? "timeout" : childError,
+        !killFailed);
+    };
+    child.once("error", (error) => { childError = error.message; childCode = 1; });
+    child.once("close", (code) => { childClosed = true; childCode = code ?? 1; settle(); });
     const timeout = Number(job.timeoutSeconds);
     if (Number.isFinite(timeout) && timeout > 0) {
       const timer = setTimeout(() => {
-        if (finished || !child?.pid) return;
+        if (finished || childClosed || !child?.pid) return;
+        timedOut = true;
+        killerClosed = false;
         write(`timeout after ${timeout} seconds; terminating process tree`);
-        spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true }).unref();
-        finish("failed", 124, "timeout");
+        try {
+          const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+          killer.once("error", (error) => { killFailed = true; write(`taskkill error: ${error.message}`); killerClosed = true; settle(); });
+          killer.once("close", (code) => { if (code !== 0) killFailed = true; killerClosed = true; settle(); });
+        } catch (error) { killFailed = true; killerClosed = true; settle(); }
       }, Math.min(timeout, 86_400) * 1000);
       timer.unref();
     }

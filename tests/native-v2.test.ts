@@ -37,6 +37,7 @@ describe("OpenCode 2 plugin boundary", () => {
     expect(names).toContain("schedule_job")
     expect(names).toContain("delete_job")
     expect(names).toContain("list_jobs")
+    expect(names).not.toContain("cleanup_global")
     expect(schemas.schedule_job.type).toBe("object")
     expect(schemas.schedule_job.properties.schedule).toBeDefined()
     expect(schemas.schedule_job.additionalProperties).not.toBe(true)

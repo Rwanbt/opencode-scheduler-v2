@@ -1,0 +1,59 @@
+name: Scheduler V2 Hardening
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  targeted:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run typecheck
+      - run: npm run build
+      - run: node scripts/native-scoped-record-integrity.mjs
+      - run: bun test tests/native-v2.test.ts tests/policy.test.ts tests/manifest.test.ts tests/windows-ref.test.ts tests/systemd.test.ts tests/cron-validation.test.ts
+      - if: runner.os == 'Windows'
+        run: bun test tests/windows.test.ts
+      - if: runner.os == 'Windows'
+        run: node scripts/windows-schtasks-smoke.mjs
+      - if: runner.os == 'Windows'
+        run: node scripts/windows-engine-e2e.mjs
+      - if: runner.os == 'macOS'
+        run: node scripts/macos-launchd-e2e.mjs
+      - if: runner.os != 'Windows'
+        run: bun scripts/posix-supervisor-e2e.ts
+      - run: npm pack --dry-run --json --ignore-scripts
+  native-opencode-v2:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: npm install -g @opencode/cli@2.0.32 --no-audit --no-fund
+      - run: node scripts/native-cli-smoke.mjs

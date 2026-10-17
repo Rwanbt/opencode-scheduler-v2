@@ -17,6 +17,9 @@ process.env.APPDATA = path.join(home, "appdata")
 process.env.LOCALAPPDATA = path.join(home, "local")
 const mock = path.join(root, "opencode.exe")
 copyFileSync(process.execPath, mock)
+const legacyDir = path.join(home, ".config", "opencode", "jobs")
+mkdirSync(legacyDir, { recursive: true })
+const legacyFile = path.join(legacyDir, "e2e-disposable.json")
 process.env.OPENCODE_SCHEDULER_OPENCODE_PATH = mock
 process.env.OPENCODE_SCHEDULER_NODE_PATH = process.execPath
 const { default: plugin } = await import(pathToFileURL(path.resolve("dist/index.js")).href)
@@ -57,8 +60,14 @@ try {
   }
   const list = await tools.get("list_jobs").execute({}, {})
   if (!String(list.content).includes("e2e-disposable")) throw new Error("Native list_jobs did not return scheduled job")
+  // Scoped deletion must preserve a global legacy file with the same slug.
+  const legacyProof = "LEGACY_OTHER_PROJECT_MUST_REMAIN"
+  writeFileSync(legacyFile, legacyProof)
   const del = await tools.get("delete_job").execute({ name: "e2e-disposable" }, {})
   if (!String(del.content).includes("Deleted")) throw new Error(`Native delete_job failed: ${del.content}`)
+  if (!existsSync(legacyFile) || readFileSync(legacyFile, "utf8") !== legacyProof) {
+    throw new Error("Scoped deletion modified the unrelated legacy job")
+  }
   for (const name of taskNames) {
     if (schtasks("/Query", "/TN", name).status === 0) throw new Error(`Task survived deletion: ${name}`)
   }

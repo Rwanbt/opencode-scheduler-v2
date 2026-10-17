@@ -23,6 +23,7 @@ import { delimiter } from "node:path"
 import { projectDirectory } from "./scope.js"
 import { windowsExecutable, windowsOpenCodeExecutable, windowsTaskAction } from "./windows.js"
 import { loadWindowsManifest, saveWindowsManifest, beginWindowsTask, confirmWindowsTask, windowsTasksToDelete } from "./windows-manifest.js"
+import { windowsJobRefPath, writeWindowsJobReference } from "./windows-job-ref.js"
 
 // Storage location - shared with other opencode tools
 const OPENCODE_CONFIG = join(homedir(), ".config", "opencode")
@@ -938,7 +939,12 @@ function buildWindowsTaskCommand(job: Job): string {
   } else {
     copyFileSync(packagedRunner, runner)
   }
-  return windowsTaskAction(node, runner, jobFilePath(job.scopeId || deriveScopeId(job.workdir || homedir()), job.slug))
+  const jobPath = jobFilePath(job.scopeId || deriveScopeId(job.workdir || homedir()), job.slug)
+  const shortRef = windowsJobRefPath(SCHEDULER_DIR, jobPath)
+  // Validate /TR representability before persisting the pointer.
+  const action = windowsTaskAction(node, runner, shortRef)
+  writeWindowsJobReference(shortRef, jobPath)
+  return action
 }
 
 function maybeStep(field: string): number | null {
@@ -1323,6 +1329,9 @@ function uninstallWindowsJob(job: Job): void {
     execFileSync("schtasks", ["/Delete", "/TN", name, "/F"], { stdio: "ignore" })
   }
   unlinkSync(file)
+  const jobPath = jobFilePath(scope, job.slug)
+  const shortRef = windowsJobRefPath(SCHEDULER_DIR, jobPath)
+  if (existsSync(shortRef)) unlinkSync(shortRef)
 }
 // === CROSS-PLATFORM ===
 
@@ -3173,13 +3182,7 @@ Commands:
           uninstallJob(job)
           deleteJobFile(job)
 
-          // Best-effort: remove legacy job file if present.
-          const legacyPath = join(LEGACY_JOBS_DIR, `${job.slug}.json`)
-          if (existsSync(legacyPath)) {
-            try {
-              unlinkSync(legacyPath)
-            } catch {}
-          }
+          // Scoped deletion must preserve unrelated global legacy jobs.
 
           return okResult(format, `Deleted job "${job.name}"`, { job })
         },

@@ -4,8 +4,29 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const { homedir } = require("node:os");
+const { createHash } = require("node:crypto");
 
-const jobPath = process.argv[2];
+let jobPath = process.argv[2];
+if (jobPath && /^j-[a-f0-9]{24}\.json$/i.test(path.basename(jobPath))) {
+  // Only the current user's trusted scheduler root may hold job pointers.
+  const expected = path.win32.join(homedir(), ".config", "opencode", "scheduler", path.basename(jobPath));
+  if (path.win32.normalize(jobPath).toLowerCase() !== path.win32.normalize(expected).toLowerCase()) {
+    console.error("scheduler: foreign or noncanonical Windows pointer path");
+    process.exit(2);
+  }
+  let reference;
+  try { reference = JSON.parse(fs.readFileSync(jobPath, "utf8")); }
+  catch { console.error("scheduler: invalid short job reference"); process.exit(2); }
+  const pointed = reference?.jobPath;
+  if (typeof pointed !== "string" || !path.win32.isAbsolute(pointed) ||
+      createHash("sha256").update(path.win32.normalize(pointed).toLowerCase()).digest("hex").slice(0, 24) !==
+        path.basename(jobPath).slice(2, 26)) {
+    console.error("scheduler: short job reference identity mismatch");
+    process.exit(2);
+  }
+  jobPath = pointed;
+}
 const scopesDirectory = jobPath ? path.dirname(path.dirname(path.dirname(jobPath))) : "";
 const schedulerDirectory = path.dirname(scopesDirectory);
 if (!jobPath || !path.win32.isAbsolute(jobPath)) {

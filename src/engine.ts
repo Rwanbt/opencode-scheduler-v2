@@ -325,18 +325,18 @@ if ($child_pid == 0) {
   die "Failed to exec $command: $!\n";
 }
 
-if ($timeout > 0) {
-  local $SIG{ALRM} = sub {
-    $timed_out = 1;
-    my $now = iso_now();
-    print "\n=== Timeout after $timeout seconds $now; sending SIGTERM ===\n";
-    kill 'TERM', -$child_pid;
-    sleep 5;
-    print "\n=== Forcing SIGKILL $now ===\n";
-    kill 'KILL', -$child_pid;
-  };
-  alarm($timeout);
-}
+# Keep the handler active across waitpid. A block-local handler is restored
+# before the wait and the default SIGALRM would kill the supervisor instead.
+local $SIG{ALRM} = sub {
+  $timed_out = 1;
+  my $now = iso_now();
+  print "\n=== Timeout after $timeout seconds $now; sending SIGTERM ===\n";
+  kill 'TERM', -$child_pid;
+  sleep 5;
+  print "\n=== Forcing SIGKILL $now ===\n";
+  kill 'KILL', -$child_pid;
+};
+alarm($timeout);
 
 my $waited = waitpid($child_pid, 0);
 my $status = $?;

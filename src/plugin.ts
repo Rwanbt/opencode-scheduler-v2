@@ -6,6 +6,7 @@ import { assertProjectToolScope } from "./policy.js"
 type ToolEditor = { add(definition: {
   name: string
   description: string
+  options?: { codemode: boolean }
   input: Record<string, unknown>
   execute: (args: unknown, context: unknown) => Promise<{ content: string }>
 }): void }
@@ -44,6 +45,7 @@ export const SchedulerPluginV2 = {
         editor.add({
           name,
           description: definition.description,
+          options: { codemode: false },
           input,
           execute: async (args, toolContext) => runInProject(project, async () => {
             assertProjectToolScope(name, args, project)

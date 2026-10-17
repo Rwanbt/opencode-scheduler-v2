@@ -27,17 +27,20 @@ describe("OpenCode 2 plugin boundary", () => {
   test("registers the original tools with converted nonpermissive JSON schemas", async () => {
     const names: string[] = []
     const schemas: Record<string, any> = {}
+    const codemode: Record<string, unknown> = {}
     await SchedulerPluginV2.setup({
       directory: "D:\\Safe-Project",
       tool: { transform: async (register) => register({ add: (tool) => {
         names.push(tool.name)
         schemas[tool.name] = tool.input
+        codemode[tool.name] = tool.options?.codemode
       } }) },
     })
     expect(names).toContain("schedule_job")
     expect(names).toContain("delete_job")
     expect(names).toContain("list_jobs")
     expect(names).not.toContain("cleanup_global")
+    expect(codemode.schedule_job).toBe(false)
     expect(schemas.schedule_job.type).toBe("object")
     expect(schemas.schedule_job.properties.schedule).toBeDefined()
     expect(schemas.schedule_job.additionalProperties).not.toBe(true)

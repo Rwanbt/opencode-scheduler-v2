@@ -26,6 +26,7 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run typecheck
       - run: npm run build
+      - run: node scripts/native-scoped-record-integrity.mjs
       - run: bun test tests/native-v2.test.ts tests/policy.test.ts tests/manifest.test.ts tests/windows-ref.test.ts tests/systemd.test.ts
       - if: runner.os == 'Windows'
         run: bun test tests/windows.test.ts

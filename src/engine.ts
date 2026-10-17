@@ -1111,6 +1111,8 @@ function createLaunchdPlist(job: Job): string {
 
   <key>EnvironmentVariables</key>
   <dict>
+    <key>HOME</key>
+    <string>${escapePlistString(homedir())}</string>
     <key>PATH</key>
     <string>${escapePlistString(enhancedPath)}</string>
   </dict>

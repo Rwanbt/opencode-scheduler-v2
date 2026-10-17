@@ -53,7 +53,17 @@ try {
     }
     if (found) break
   }
-  if (!found) throw new Error("LaunchAgent did not produce a no-inference execution log")
+  if (!found) {
+    let observed = ""
+    try { observed = launchctl("list", label).slice(0, 400) } catch (error) { observed = String(error.message).slice(0, 400) }
+    const scopesDir = path.join(home, ".config", "opencode", "scheduler", "scopes")
+    const scopes = existsSync(scopesDir) ? readdirSync(scopesDir) : []
+    const statuses = scopes.flatMap((scope) => {
+      const file = path.join(scopesDir, scope, "jobs", "launchd-disposable.json")
+      return existsSync(file) ? [readFileSync(file, "utf8").slice(-450)] : []
+    })
+    throw new Error(`LaunchAgent did not produce proof. launchctl=${observed} job=${statuses.join("; ")}`)
+  }
   const removedResult = await tools.get("delete_job").execute({ name: "launchd-disposable" }, {})
   if (!String(removedResult.content).includes("Deleted")) throw new Error(`delete_job failed: ${removedResult.content}`)
   removed = true

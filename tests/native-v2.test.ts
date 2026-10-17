@@ -42,4 +42,18 @@ describe("OpenCode 2 plugin boundary", () => {
     expect(schemas.schedule_job.properties.schedule).toBeDefined()
     expect(schemas.schedule_job.additionalProperties).not.toBe(true)
   })
-})
+
+  test("real V2 tool wrappers deny cross-project side effects before engine entry", async () => {
+    const registered: Record<string, {execute: (args: unknown, context: unknown) => Promise<unknown>}> = {}
+    const home = path.resolve("registered-project")
+    await SchedulerPluginV2.setup({ directory: home, tool: { transform: async (callback) => callback({
+      add: (tool) => { registered[tool.name] = tool },
+    }) } })
+    expect(registered.list_jobs).toBeDefined()
+    expect(registered.schedule_job).toBeDefined()
+    expect(registered.cleanup_global).toBeUndefined()
+    await expect(registered.list_jobs.execute({ allScopes: true }, {})).rejects.toThrow(/Cross-project/)
+    await expect(registered.list_jobs.execute({ includeLegacy: "yes" }, {})).rejects.toThrow(/Cross-project/)
+    await expect(registered.schedule_job.execute({ name: "unsafe", schedule: "0 9 * * *", workdir: path.resolve("foreign") }, {}))
+      .rejects.toThrow(/active project/)
+  })})

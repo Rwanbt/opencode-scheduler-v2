@@ -31,3 +31,21 @@ jobs:
       - if: runner.os == 'Windows'
         run: node scripts/windows-schtasks-smoke.mjs
       - run: npm pack --dry-run --json --ignore-scripts
+  native-opencode-v2:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: npm install -g @opencode/cli@2.0.32 --ignore-scripts --no-audit --no-fund
+      - run: node scripts/native-cli-smoke.mjs

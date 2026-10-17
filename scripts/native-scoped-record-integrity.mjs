@@ -63,6 +63,10 @@ try {
     assert.deepEqual(listingB.data.jobs.map((j) => j.name), ["OWN_B"], "B must see only its own records")
     const poisonedLookup = await call(A, "get_job", { name: "foreign" })
     assert.equal(poisonedLookup.success, false, "a forged job may not be opened using its foreign scopeId")
+    const poisonedDelete = await call(A, "delete_job", { name: "foreign" })
+    assert.equal(poisonedDelete.success, false, "a forged job may not route deletion to another scope")
+    const poisonedUpdate = await call(A, "update_job", { name: "foreign", schedule: "15 8 * * *" })
+    assert.equal(poisonedUpdate.success, false, "a forged job may not be updated under a foreign scope")
     for (const name of ["filename", "wrong-workdir", "oversized", "../../other/scope"]) {
       const checked = await call(A, "get_job", { name })
       assert.equal(checked.success, false, `untrusted record must be rejected: ${name}`)

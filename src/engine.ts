@@ -13,11 +13,12 @@
  */
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, unlinkSync } from "fs"
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, unlinkSync, copyFileSync } from "fs"
 import { basename, dirname, join, resolve as resolvePath } from "path"
 import { homedir, platform } from "os"
 import { execFileSync, execSync, spawn, type ChildProcess } from "child_process"
 import { fileURLToPath } from "url"
+import { createHash } from "node:crypto"
 import { delimiter } from "node:path"
 import { projectDirectory } from "./scope.js"
 import { windowsExecutable, windowsOpenCodeExecutable, windowsTaskAction } from "./windows.js"
@@ -908,8 +909,21 @@ function getWindowsInvocation(job: Job): JobInvocation {
 
 function buildWindowsTaskCommand(job: Job): string {
   const node = windowsExecutable("node", process.env.OPENCODE_SCHEDULER_NODE_PATH)
-  const runner = join(dirname(fileURLToPath(import.meta.url)), "windows-runner.cjs")
-  if (!existsSync(runner)) throw new Error(`Windows scheduler runner not found: ${runner}`)
+  const packagedRunner = join(dirname(fileURLToPath(import.meta.url)), "windows-runner.cjs")
+  if (!existsSync(packagedRunner)) throw new Error(`Windows scheduler runner not found: ${packagedRunner}`)
+  // Task Scheduler's /TR limit is ~260 chars. Install a content-addressed
+  // standalone copy in the short, stable scheduler config directory. Jobs
+  // remain executable after an npm plugin upgrade without relying on a long
+  // versioned node_modules path.
+  const source = readFileSync(packagedRunner)
+  const sha = createHash("sha256").update(source).digest("hex").slice(0, 12)
+  const runner = join(SCHEDULER_DIR, `win-runner-${sha}.cjs`)
+  ensureDir(SCHEDULER_DIR)
+  if (existsSync(runner)) {
+    if (!readFileSync(runner).equals(source)) throw new Error("Installed Windows runner hash mismatch; refusing to schedule")
+  } else {
+    copyFileSync(packagedRunner, runner)
+  }
   return windowsTaskAction(node, runner, jobFilePath(job.scopeId || deriveScopeId(job.workdir || homedir()), job.slug))
 }
 

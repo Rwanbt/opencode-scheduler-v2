@@ -25,7 +25,7 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run build
-      - run: bun test tests/native-v2.test.ts
+      - run: bun test tests/native-v2.test.ts tests/systemd.test.ts
       - if: runner.os == 'Windows'
         run: bun test tests/windows.test.ts
       - run: npm pack --dry-run --json --ignore-scripts

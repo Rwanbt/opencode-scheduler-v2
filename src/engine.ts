@@ -14,7 +14,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, unlinkSync, copyFileSync } from "fs"
-import { basename, dirname, join, resolve as resolvePath } from "path"
+import { basename, dirname, join, isAbsolute, resolve as resolvePath } from "path"
 import { homedir, platform } from "os"
 import { execFileSync, execSync, spawn, type ChildProcess } from "child_process"
 import { fileURLToPath } from "url"
@@ -664,6 +664,18 @@ function findOpencode(): string {
   return "opencode" // hope it's in PATH
 }
 
+function findPerlExecutable(): string {
+  const override = process.env.OPENCODE_SCHEDULER_PERL_PATH?.trim()
+  if (override) {
+    if (!isAbsolute(override) || !existsSync(override)) throw new Error("Configured Perl executable must be an existing absolute path")
+    return override
+  }
+  try {
+    const resolved = execFileSync("which", ["perl"], { encoding: "utf8" }).trim().split(/\r?\n/)[0]
+    if (resolved && isAbsolute(resolved) && existsSync(resolved)) return resolved
+  } catch {}
+  throw new Error("Perl executable not found; install perl or set OPENCODE_SCHEDULER_PERL_PATH")
+}
 // Get PATH that includes common locations for node/npx
 function getEnhancedPath(): string {
   if (IS_WINDOWS) return process.env.PATH ?? ""
@@ -675,7 +687,8 @@ function getEnhancedPath(): string {
     "/usr/sbin",
     "/sbin",
   ]
-  return paths.join(":")
+  const active = (process.env.PATH ?? "").split(":").filter(Boolean)
+  return [...new Set([...active, ...paths])].join(":")
 }
 
 function splitCronExpression(cron: string): [string, string, string, string, string] {
@@ -820,7 +833,7 @@ function formatSystemdValue(value: number, size: number): string {
   return value.toString().padStart(size, "0")
 }
 
-function cronToSystemdCalendars(cron: string): string[] {
+export function cronToSystemdCalendars(cron: string): string[] {
   const [minute, hour, dayOfMonth, month, dayOfWeek] = splitCronExpression(cron)
   const minuteValues = parseCronField(minute, 0, 59, "minute")
   const hourValues = parseCronField(hour, 0, 23, "hour")
@@ -844,7 +857,7 @@ function cronToSystemdCalendars(cron: string): string[] {
         for (const domValue of domValues) {
           for (const monthValue of months) {
             for (const dowValue of dowValues) {
-              calendars.push(`${dowValue} *-${monthValue}-${domValue} ${hourValue}:${minuteValue}:00`)
+              calendars.push(`${dowValue === "*" ? "" : `${dowValue} `}*-${monthValue}-${domValue} ${hourValue}:${minuteValue}:00`)
             }
           }
         }
@@ -1070,7 +1083,7 @@ function createLaunchdPlist(job: Job): string {
           .join("\n")}\n  </array>`
 
   const programArgumentsXml = [
-    `    <string>${escapePlistString("/usr/bin/perl")}</string>`,
+    `    <string>${escapePlistString(findPerlExecutable())}</string>`,
     `    <string>${escapePlistString(SUPERVISOR_PATH)}</string>`,
     `    <string>${escapePlistString(jobPath)}</string>`,
   ].join("\n")
@@ -1178,7 +1191,7 @@ function createSystemdService(job: Job): string {
   const workdir = job.workdir || homedir()
   const enhancedPath = getEnhancedPath()
 
-  const execStart = ["/usr/bin/perl", SUPERVISOR_PATH, jobPath]
+  const execStart = [findPerlExecutable(), SUPERVISOR_PATH, jobPath]
     .map((arg) => `"${escapeSystemdArg(arg)}"`)
     .join(" ")
 
@@ -1454,7 +1467,7 @@ function createCronEntry(job: Job): string {
   const escapedLogPath = shellEscapeDoubleQuoted(logFilePath)
   const escapedPath = shellEscapeDoubleQuoted(getEnhancedPath())
 
-  return `${job.schedule} PATH="${escapedPath}" /usr/bin/perl "${escapedSupervisor}" "${escapedJobPath}" >> "${escapedLogPath}" 2>&1`
+  return `${job.schedule} PATH="${escapedPath}" "${shellEscapeDoubleQuoted(findPerlExecutable())}" "${escapedSupervisor}" "${escapedJobPath}" >> "${escapedLogPath}" 2>&1`
 }
 
 function installCronJob(job: Job): void {

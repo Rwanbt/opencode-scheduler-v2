@@ -6,6 +6,8 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 
 const jobPath = process.argv[2];
+const scopesDirectory = jobPath ? path.dirname(path.dirname(path.dirname(jobPath))) : "";
+const schedulerDirectory = path.dirname(scopesDirectory);
 if (!jobPath || !path.win32.isAbsolute(jobPath)) {
   console.error("scheduler: absolute job file required");
   process.exit(2);
@@ -20,7 +22,9 @@ catch (error) { console.error("scheduler: unreadable job file", error.message); 
 if (!/^[a-z0-9-]+$/.test(job.scopeId ?? "") || !/^[a-z0-9-]+$/.test(job.slug ?? "") ||
     path.basename(jobPath) !== `${job.slug}.json` ||
     path.basename(path.dirname(jobPath)) !== "jobs" ||
-    path.basename(path.dirname(path.dirname(jobPath))) !== job.scopeId) {
+    path.basename(path.dirname(path.dirname(jobPath))) !== job.scopeId ||
+    path.basename(scopesDirectory) !== "scopes" ||
+    path.basename(schedulerDirectory) !== "scheduler") {
   console.error("scheduler: invalid scoped job identity");
   process.exit(2);
 }

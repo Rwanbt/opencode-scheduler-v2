@@ -1,15 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import { runInProject, projectDirectory } from "../src/scope"
 import SchedulerPluginV2 from "../src/plugin"
+import path from "node:path"
 
 describe("OpenCode 2 plugin boundary", () => {
   test("project identity is per async request (not process.cwd)", async () => {
     expect(() => projectDirectory()).toThrow()
-    const a = runInProject("C:\\Workspace-A", async () => {
+    const a = runInProject(path.resolve("workspace-a"), async () => {
       await Promise.resolve()
       return projectDirectory()
     })
-    const b = runInProject("C:\\Workspace-B", async () => {
+    const b = runInProject(path.resolve("workspace-b"), async () => {
       await Promise.resolve()
       return projectDirectory()
     })

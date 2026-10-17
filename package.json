@@ -1,7 +1,7 @@
 {
-  "name": "opencode-scheduler-v2",
-  "version": "0.1.0",
-  "description": "OpenCode v2 plugin adapter for opencode-scheduler (cron/launchd/systemd scheduled jobs). Runs the unchanged v1 engine on OpenCode 2.x.",
+  "name": "@rwanbt/opencode-scheduler-v2",
+  "version": "0.2.0-rwanbt.1",
+  "description": "OpenCode 2 scheduler with a vendored, auditable Windows-hardened scheduling engine",
   "keywords": [
     "opencode",
     "opencode-plugin",
@@ -10,32 +10,36 @@
     "cron",
     "plugin"
   ],
-  "homepage": "https://github.com/roboalchemist/opencode-scheduler-v2#readme",
+  "homepage": "https://github.com/Rwanbt/opencode-scheduler-v2#readme",
   "bugs": {
-    "url": "https://github.com/roboalchemist/opencode-scheduler-v2/issues"
+    "url": "https://github.com/Rwanbt/opencode-scheduler-v2/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/roboalchemist/opencode-scheduler-v2.git"
+    "url": "git+https://github.com/Rwanbt/opencode-scheduler-v2.git"
   },
   "license": "MIT",
   "author": "roboalchemist",
   "type": "module",
-  "main": "opencode-scheduler-v2.ts",
+  "main": "dist/index.js",
   "exports": {
-    ".": "./opencode-scheduler-v2.ts",
-    "./server": "./opencode-scheduler-v2.ts"
+    ".": "./dist/index.js",
+    "./server": "./dist/index.js"
   },
   "files": [
-    "opencode-scheduler-v2.ts",
+    "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "LICENSE-ENGINE"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests",
+    "prepack": "npm run build"
   },
   "dependencies": {
-    "opencode-scheduler": "^1.3.0",
+    "@opencode-ai/plugin": "^1.0.162",
     "zod": "^4.1.8"
   },
   "devDependencies": {

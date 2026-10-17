@@ -1,0 +1,31 @@
+name: Scheduler V2 Hardening
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/windows-v2-scheduler-hardening
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  targeted:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run build
+      - run: bun test tests/native-v2.test.ts
+      - if: runner.os == 'Windows'
+        run: bun test tests/windows.test.ts
+      - run: npm pack --dry-run --json --ignore-scripts

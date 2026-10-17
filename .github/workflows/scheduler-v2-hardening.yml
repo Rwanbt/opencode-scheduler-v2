@@ -47,5 +47,5 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build
-      - run: npm install -g @opencode/cli@2.0.32 --ignore-scripts --no-audit --no-fund
+      - run: npm install -g @opencode/cli@2.0.32 --no-audit --no-fund
       - run: node scripts/native-cli-smoke.mjs

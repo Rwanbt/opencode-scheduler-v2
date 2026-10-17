@@ -13,7 +13,7 @@
  */
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, unlinkSync, copyFileSync } from "fs"
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, unlinkSync, copyFileSync, lstatSync } from "fs"
 import { basename, dirname, join, isAbsolute, resolve as resolvePath } from "path"
 import { homedir, platform } from "os"
 import { execFileSync, execSync, spawn, type ChildProcess } from "child_process"
@@ -1589,28 +1589,34 @@ function ensureScopeStorage(scopeId: string): void {
   ensureDir(scopeLogsDir(scopeId))
 }
 
+// Serialized jobs are data, not an authority source. The physical directory
+// and filename MUST agree with both the embedded identity and workspace.
+// Otherwise a poisoned local JSON could route get/update/delete to another
+// project's scheduler state or OS task names.
+function readAttestedScopedJob(scopeId: string, slug: string): Job | null {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) return null
+  const file = jobFilePath(scopeId, slug)
+  try {
+    const info = lstatSync(file)
+    if (!info.isFile() || info.size > 1024 * 1024) return null
+    const job = normalizeJob(JSON.parse(readFileSync(file, "utf8")))
+    if (!job || job.scopeId !== scopeId || job.slug !== slug || !job.workdir ||
+        !isAbsolute(job.workdir) ||
+        deriveScopeId(job.workdir) !== scopeId) return null
+    return job
+  } catch { return null }
+}
+
 function loadScopedJob(scopeId: string, slug: string): Job | null {
   ensureScopeStorage(scopeId)
-  const path = jobFilePath(scopeId, slug)
-  if (!existsSync(path)) return null
-  try {
-    return normalizeJob(JSON.parse(readFileSync(path, "utf-8")))
-  } catch {
-    return null
-  }
+  return readAttestedScopedJob(scopeId, slug)
 }
 
 function loadAllScopedJobs(scopeId: string): Job[] {
   ensureScopeStorage(scopeId)
   const files = readdirSync(scopeJobsDir(scopeId)).filter((f) => f.endsWith(".json"))
   return files
-    .map((f) => {
-      try {
-        return normalizeJob(JSON.parse(readFileSync(join(scopeJobsDir(scopeId), f), "utf-8")))
-      } catch {
-        return null
-      }
-    })
+    .map((f) => readAttestedScopedJob(scopeId, f.slice(0, -".json".length)))
     .filter(Boolean) as Job[]
 }
 

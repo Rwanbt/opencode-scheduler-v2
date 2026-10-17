@@ -727,6 +727,11 @@ function getEnhancedPath(): string {
 }
 
 function splitCronExpression(cron: string): [string, string, string, string, string] {
+  // Reject control characters before parsing: a persisted cron expression
+  // is also embedded verbatim in a crontab entry.
+  if (!/^[\x20-\x7e]{1,128}$/.test(cron)) {
+    throw new Error("Invalid cron: only a bounded single ASCII line is allowed")
+  }
   const parts = cron.trim().split(/\s+/)
   if (parts.length !== 5) {
     throw new Error(`Invalid cron: ${cron}`)
@@ -748,8 +753,8 @@ function parseCronField(
   if (field === "*") return null
 
   if (field.startsWith("*/")) {
-    const step = parseInt(field.slice(2), 10)
-    if (!Number.isFinite(step) || step <= 0) {
+    const step = Number(field.slice(2))
+    if (!/^\*\/[1-9]\d*$/.test(field) || !Number.isSafeInteger(step) || step > max - min + 1) {
       throw new Error(`Invalid cron ${label} step: ${field}`)
     }
     const values: number[] = []
@@ -779,8 +784,8 @@ function parseCronNumber(
   label: string,
   allowSundaySeven: boolean
 ): number {
-  const parsed = parseInt(value, 10)
-  if (!Number.isFinite(parsed)) {
+  const parsed = Number(value)
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(parsed)) {
     throw new Error(`Invalid cron ${label} value: ${value}`)
   }
   const normalized = allowSundaySeven && parsed === 7 ? 0 : parsed
@@ -790,7 +795,7 @@ function parseCronNumber(
   return normalized
 }
 
-function validateCronExpression(cron: string): void {
+export function validateCronExpression(cron: string): void {
   const [minute, hour, dayOfMonth, month, dayOfWeek] = splitCronExpression(cron)
   parseCronField(minute, 0, 59, "minute")
   parseCronField(hour, 0, 23, "hour")
@@ -1474,6 +1479,8 @@ function stripManagedCronBlocks(content: string, blockIds: Set<string>): { conte
 }
 
 function createCronEntry(job: Job): string {
+  // Check again at the OS write sink for jobs loaded from persisted storage.
+  validateCronExpression(job.schedule)
   const scopeId = job.scopeId || deriveScopeId(job.workdir || homedir())
   const jobPath = jobFilePath(scopeId, job.slug)
   const logFilePath = scopedLogPath(scopeId, job.slug)

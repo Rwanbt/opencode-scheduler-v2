@@ -1,6 +1,6 @@
 {
   "name": "@rwanbt/opencode-scheduler-v2",
-  "version": "0.2.0-rwanbt.4",
+  "version": "0.2.0-rwanbt.5",
   "description": "OpenCode 2 scheduler with a vendored, auditable Windows-hardened scheduling engine",
   "keywords": [
     "opencode",

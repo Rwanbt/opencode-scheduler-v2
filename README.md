@@ -2,7 +2,7 @@
 
 This fork ports Scheduler to **OpenCode 2.x** and includes a locally audited copy of the MIT-licensed `different-ai/opencode-scheduler` 1.3.0 scheduling engine, originally at commit `cd0b62364792f53e8687db53bc2c2c0261c9cf17`. Unlike the original thin V2 adapter, the engine in this repository can be patched and versioned independently of upstream 1.3.0.
 
-**Current version: `@rwanbt/opencode-scheduler-v2@0.2.0-rwanbt.4` — development / Draft review, not production certified.**
+**Current version: `@rwanbt/opencode-scheduler-v2@0.2.0-rwanbt.5` — development / Draft review, not production certified.**
 
 ## Key fixes
 
@@ -14,6 +14,7 @@ This fork ports Scheduler to **OpenCode 2.x** and includes a locally audited cop
 - **Windows Task Scheduler:** validates representable cron schedules, resolves an absolute Node runner, and refuses overlong `/TR` actions. The runner reads a scoped job, enforces an atomic one-job-at-a-time lock, noninteractive permissions, timeout, logs, and durable exit status. For `node.exe` resolution, use `OPENCODE_SCHEDULER_NODE_PATH` if the Node binary is not on PATH.
 - **Linux/systemd portability:** fixes wildcard-weekday `OnCalendar` generation, resolves Perl without assuming `/usr/bin/perl`, and preserves environment-specific PATH entries (including Nix/NixOS).
 - **POSIX unattended defense:** stored-job identity and scheduler directory topology are validated before execution. Linux/macOS supervisor refuses invalid durations, obtains an exclusive atomic owner lock, retains stale/unknown locks for manual reconciliation, and enforces noninteractive denials for question, edit, bash and external-directory tools. This is not a proof of sandboxing or model-cost control.
+- **Strict cron syntax:** schedule fields must be bounded, single-line printable ASCII with validated integers and interval values; malformed suffixes, line-break injection and impossible steps are rejected before OS scheduling and again at the crontab write boundary.
 - **macOS launchd:** uses argument-array `launchctl` execution (no command shell for plist paths), preserves unrelated legacy jobs, refuses ambiguous unloads and XML-escapes the service environment.
 - **Native capability boundary:** cross-project locations, legacy/global enumeration, and global cleanup are denied for the project-scoped V2 plugin.
 - **No silent phantom tasks:** manifest captures intended Windows task names before registering them; uninstall only addresses matching scoped names. Partial failures retain the manifest and a visible failed job record. Ambiguous task ownership or status fails closed instead of bulk-deleting tasks.

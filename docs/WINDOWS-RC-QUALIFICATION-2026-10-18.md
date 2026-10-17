@@ -26,6 +26,16 @@
 4. The test deliberately does not execute agent/model calls or modify live
    project task state. It checks the actual plugin server registration and
    rollback, not the Android client UI.
+5. On the physical Windows host, `node scripts/windows-schtasks-smoke.mjs`
+   PASS: one manual and one **actual time-triggered** job executed using a
+   fake OpenCode executable; both persisted exit status `0` and distinct
+   `OS_CI_*_PASS` log proofs. All temporary Windows jobs were deleted.
+6. On the same host, `node scripts/windows-host-engine-rc.mjs --confirm-disposable-task`
+   PASS: the real built V2 plugin tool registry
+   executed `schedule_job`, `list_jobs`, `get_job`, and `delete_job` against
+   Windows Task Scheduler. The job lived in a disposable HOME/workspace, its
+   runner command targeted a fake Node-based OpenCode binary, and the OS
+   task was verified absent after deletion. No inference occurred.
 
 ## Important negative host finding
 

@@ -37,6 +37,7 @@ jobs:
         with:
           node-version: '22.22.2'
           cache: npm
+      - uses: oven-sh/setup-bun@v2
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build
       - name: Actual systemd/cron capability probe (no profile writes)

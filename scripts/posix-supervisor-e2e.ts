@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { createHash } from "node:crypto"
 import { once } from "node:events"
 import { SUPERVISOR_SCRIPT } from "../src/engine"
 
@@ -36,6 +37,10 @@ function job(timeoutSeconds?: unknown) {
   return {
     scopeId: scope, slug, name: slug, schedule: "0 9 * * *", workdir: project,
     invocation: { command: fakeCLI, args: ["run", "--", "NO_MODEL_OR_API"] },
+    executionAuthority: { kind: "isolated-no-inference-fixture",
+      executableSha256: createHash("sha256").update(readFileSync(fakeCLI)).digest("hex"),
+      invocationSha256: createHash("sha256").update(JSON.stringify(["run", "--", "NO_MODEL_OR_API"])).digest("hex"),
+      expiresAt: Date.now() + 3600000, maxInferenceTokens: 0, maxCostUsd: 0 },
     ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
   }
 }
@@ -73,6 +78,23 @@ try {
   chmodSync(fakeCLI, 0o700)
   const syntax = spawnSync("perl", ["-c", perlScript], { encoding: "utf8" })
   assert.equal(syntax.status, 0, syntax.stderr)
+
+  save({ ...job(10), executionAuthority: undefined })
+  const denied = run()
+  assert.notEqual(denied.status, 0)
+  assert.match(denied.stderr, /No verified zero-inference authority/)
+  assert.equal(existsSync(proof), false)
+  console.log("POSIX_UNAUTHORIZED_INFERENCE_DENIED_PASS")
+
+  const originalFixture = readFileSync(fakeCLI)
+  writeFileSync(fakeCLI, "#!/bin/sh\nprintf 'UNRECOGNIZED_FAKE\\n'\n")
+  save(job(10)) // Attacker also refreshes the stored digest; still denied.
+  const forgedFixture = run()
+  assert.notEqual(forgedFixture.status, 0)
+  assert.match(forgedFixture.stderr, /Unrecognized zero-inference fixture/)
+  assert.equal(existsSync(proof), false)
+  writeFileSync(fakeCLI, originalFixture)
+  console.log("POSIX_FORGED_FIXTURE_HASH_DENIED_PASS")
 
   // Previously an explicit zero or a corrupt string disabled the POSIX watchdog.
   for (const invalid of [0, -1, 3601, 1.5, null, "unbounded"]) {

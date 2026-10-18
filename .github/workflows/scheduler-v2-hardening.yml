@@ -27,7 +27,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: node scripts/native-scoped-record-integrity.mjs
-      - run: bun test tests/native-v2.test.ts tests/policy.test.ts tests/manifest.test.ts tests/windows-ref.test.ts tests/windows-task-lifecycle.test.ts tests/windows-task-probe.test.ts tests/systemd.test.ts tests/cron-validation.test.ts
+      - run: bun test tests/native-v2.test.ts tests/policy.test.ts tests/manifest.test.ts tests/windows-ref.test.ts tests/windows-task-lifecycle.test.ts tests/windows-task-probe.test.ts tests/systemd.test.ts tests/cron-validation.test.ts tests/execution-authority.test.ts tests/posix-legacy-ownership.test.ts tests/legacy-migration.test.ts
+      - run: node scripts/legacy-migration-e2e.mjs
       - if: runner.os == 'Windows'
         run: bun test tests/windows.test.ts tests/windows-task-probe-live.test.ts
       - if: runner.os == 'Windows'

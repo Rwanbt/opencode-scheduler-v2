@@ -65,8 +65,20 @@ try {
     assert.equal(poisonedLookup.success, false, "a forged job may not be opened using its foreign scopeId")
     const poisonedDelete = await call(A, "delete_job", { name: "foreign" })
     assert.equal(poisonedDelete.success, false, "a forged job may not route deletion to another scope")
-    const poisonedUpdate = await call(A, "update_job", { name: "foreign", schedule: "15 8 * * *" })
-    assert.equal(poisonedUpdate.success, false, "a forged job may not be updated under a foreign scope")
+    // First prove the ordinary (unapproved) host cannot authorize model work.
+    await assert.rejects(() => call(A, "update_job", { name: "foreign", schedule: "15 8 * * *" }),
+      /token\/cost budget authority/)
+    // Then preserve the independent cross-scope assertion under the isolated
+    // no-inference acceptance mode. No OS task or model will be invoked.
+    process.env.OPENCODE_SCHEDULER_HOST_NO_INFERENCE = "explicit-disposable-task"
+    process.env.OPENCODE_SCHEDULER_CI_NO_INFERENCE = "acknowledged-fixture-only"
+    try {
+      const poisonedUpdate = await call(A, "update_job", { name: "foreign", schedule: "15 8 * * *" })
+      assert.equal(poisonedUpdate.success, false, "a forged job may not be updated under a foreign scope")
+    } finally {
+      delete process.env.OPENCODE_SCHEDULER_HOST_NO_INFERENCE
+      delete process.env.OPENCODE_SCHEDULER_CI_NO_INFERENCE
+    }
     for (const name of ["filename", "wrong-workdir", "oversized", "../../other/scope"]) {
       const checked = await call(A, "get_job", { name })
       assert.equal(checked.success, false, `untrusted record must be rejected: ${name}`)

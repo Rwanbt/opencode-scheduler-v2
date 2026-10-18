@@ -22,6 +22,7 @@ const legacyDir = path.join(home, ".config", "opencode", "jobs")
 mkdirSync(legacyDir, { recursive: true })
 const legacyFile = path.join(legacyDir, "e2e-disposable.json")
 process.env.OPENCODE_SCHEDULER_OPENCODE_PATH = mock
+process.env.OPENCODE_SCHEDULER_CI_NO_INFERENCE = "acknowledged-fixture-only"
 process.env.OPENCODE_SCHEDULER_NODE_PATH = process.execPath
 const { default: plugin } = await import(pathToFileURL(path.resolve("dist/index.js")).href)
 const tools = new Map()

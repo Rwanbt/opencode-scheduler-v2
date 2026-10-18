@@ -21,6 +21,7 @@ import { fileURLToPath } from "url"
 import { createHash } from "node:crypto"
 import { delimiter } from "node:path"
 import { projectDirectory } from "./scope.js"
+import { fixtureAuthority, verifyFixtureAuthority, BUDGET_DENIAL, type FixtureAuthority } from "./execution-authority.js"
 import { windowsExecutable, windowsOpenCodeExecutable, windowsTaskAction } from "./windows.js"
 import { registerWindowsTasks, removeWindowsTasks, type WindowsTaskEffects } from "./windows-task-lifecycle.js"
 import { queryWindowsTaskState } from "./windows-task-probe.js"
@@ -135,6 +136,7 @@ export const SUPERVISOR_SCRIPT = `#!/usr/bin/perl
 use strict;
 use warnings;
 use JSON::PP;
+use Digest::SHA qw(sha256_hex);
 use Errno qw(EEXIST);
 use Fcntl qw(O_WRONLY O_CREAT O_EXCL);
 use File::Basename qw(dirname);
@@ -229,6 +231,47 @@ for my $dir (dirname($job_path), $scheduler_root,
 my $timeout = exists $job->{timeoutSeconds} ? $job->{timeoutSeconds} : 1800;
 if (!defined($timeout) || ref($timeout) || $timeout !~ /^[1-9][0-9]{0,3}$/ || $timeout > 3600) {
   die "Unattended timeout must be 1-3600 seconds\\n";
+}
+
+# A wall-clock alarm cannot cap inference tokens or provider charges.
+# No arbitrary OpenCode execution is allowed without a verified authority.
+# At present only hash-pinned expiring zero-inference test fixtures qualify.
+my $approval = $job->{executionAuthority};
+my $invocation = $job->{invocation};
+my $now_ms = int(time() * 1000);
+if (!$approval || ref($approval) ne 'HASH' ||
+    ($approval->{kind} // '') ne 'isolated-no-inference-fixture' ||
+    !defined($approval->{maxInferenceTokens}) || $approval->{maxInferenceTokens} != 0 ||
+    !defined($approval->{maxCostUsd}) || $approval->{maxCostUsd} != 0 ||
+    !defined($approval->{expiresAt}) || $approval->{expiresAt} !~ /^\\d+$/ ||
+    $approval->{expiresAt} < $now_ms || $approval->{expiresAt} > $now_ms + 3600000 ||
+    ($approval->{executableSha256} // '') !~ /^[a-f0-9]{64}$/ ||
+    ($approval->{invocationSha256} // '') !~ /^[a-f0-9]{64}$/ ||
+    !$invocation || ref($invocation) ne 'HASH' ||
+    !defined($invocation->{command}) || $invocation->{command} !~ m{^/} ||
+    ref($invocation->{args}) ne 'ARRAY') {
+  die "No verified zero-inference authority: inference budgets unavailable\\n";
+}
+open my $approved_fh, '<', $invocation->{command}
+  or die "Unable to verify approved executable\\n";
+binmode $approved_fh;
+local $/;
+my $approved_digest = sha256_hex(<$approved_fh>);
+close $approved_fh;
+if ($approved_digest ne $approval->{executableSha256}) {
+  die "Approved zero-inference executable changed\\n";
+}
+# An attacker-controlled SHA of an arbitrary shell command is not evidence of
+# non-inference. Allow only the immutable test harness scripts shipped in CI.
+# Both digests refer to benign stdout/permission/sleep fixtures, not OpenCode.
+if ($invocation->{command} !~ m{/fake-opencode$} ||
+    ($approved_digest ne 'ee17f328e60e0381dbdae2f6278db656589c03aaa89762a3fe8596077ad44ea8' &&
+     $approved_digest ne 'e81115f84089291aa4968cb338ce2c19446637777b549d792723dd8215c9513b')) {
+  die "Unrecognized zero-inference fixture executable\\n";
+}
+if (sha256_hex(JSON::PP->new->utf8->canonical->encode($invocation->{args})) ne
+    $approval->{invocationSha256}) {
+  die "Approved zero-inference invocation changed\\n";
 }
 my $locks_dir = "$scheduler_root/locks";
 my $runs_dir = "$scheduler_root/runs";
@@ -452,6 +495,7 @@ interface Job {
   // Snapshot of the command line the OS scheduler should execute.
   // This keeps scheduled runs stable even if run/prompt is updated.
   invocation?: JobInvocation
+  executionAuthority?: FixtureAuthority
 
   // Reliability knobs (optional)
   timeoutSeconds?: number
@@ -1229,6 +1273,9 @@ function createSystemdService(job: Job): string {
     .map((arg) => `"${escapeSystemdArg(arg)}"`)
     .join(" ")
 
+  // systemd directives interpolate unit text. Reject control/newline injection
+  // and specifier expansion in values whose trust is only the job record.
+  for (const v of [job.name, workdir, enhancedPath, logFilePath, jobPath]) assertSafeSystemdValue(v)
   return `[Unit]
 Description=OpenCode Job: ${job.name}
 
@@ -1245,7 +1292,14 @@ WantedBy=default.target
 `
 }
 
+export function assertSafeSystemdValue(value: string): void {
+  if (typeof value !== "string" || /[\x00-\x1f\x7f%]/.test(value)) {
+    throw new Error("Unsafe control or specifier in systemd unit data")
+  }
+}
+
 function createSystemdTimer(job: Job): string {
+  assertSafeSystemdValue(job.name)
   const calendars = cronToSystemdCalendars(job.schedule)
   const calendarLines = calendars.map((calendar) => `OnCalendar=${calendar}`).join("\n")
 
@@ -1272,11 +1326,8 @@ function installSystemdJob(job: Job): void {
   const servicePath = join(SYSTEMD_USER_DIR, `opencode-job-${scopeId}-${job.slug}.service`)
   const timerPath = join(SYSTEMD_USER_DIR, `opencode-job-${scopeId}-${job.slug}.timer`)
 
-  // Also stop/disable legacy units (pre-scope)
-  try {
-    execSync(`systemctl --user stop opencode-job-${job.slug}.timer`, { stdio: "ignore" })
-    execSync(`systemctl --user disable opencode-job-${job.slug}.timer`, { stdio: "ignore" })
-  } catch {}
+  // Legacy unscoped units may belong to another project. Never touch them
+  // without an independent, explicit ownership/migration procedure.
 
   // Write service and timer
   writeFileSync(servicePath, createSystemdService(job))
@@ -1292,9 +1343,7 @@ function uninstallSystemdJob(job: Job): void {
   const scopeId = job.scopeId || deriveScopeId(job.workdir || homedir())
 
   const scopedTimerUnit = `opencode-job-${scopeId}-${job.slug}.timer`
-  const legacyTimerUnit = `opencode-job-${job.slug}.timer`
-
-  for (const timerUnit of [scopedTimerUnit, legacyTimerUnit]) {
+  for (const timerUnit of [scopedTimerUnit]) {
     try {
       execSync(`systemctl --user stop ${timerUnit}`, { stdio: "ignore" })
       execSync(`systemctl --user disable ${timerUnit}`, { stdio: "ignore" })
@@ -1303,10 +1352,9 @@ function uninstallSystemdJob(job: Job): void {
 
   const scopedServicePath = join(SYSTEMD_USER_DIR, `opencode-job-${scopeId}-${job.slug}.service`)
   const scopedTimerPath = join(SYSTEMD_USER_DIR, `opencode-job-${scopeId}-${job.slug}.timer`)
-  const legacyServicePath = join(SYSTEMD_USER_DIR, `opencode-job-${job.slug}.service`)
-  const legacyTimerPath = join(SYSTEMD_USER_DIR, `opencode-job-${job.slug}.timer`)
-
-  for (const p of [scopedServicePath, scopedTimerPath, legacyServicePath, legacyTimerPath]) {
+  // Legacy name-only service/timer units are explicitly out of scope; an
+  // unscoped matching slug is not evidence that this plugin owns them.
+  for (const p of [scopedServicePath, scopedTimerPath]) {
     if (existsSync(p)) {
       try {
         unlinkSync(p)
@@ -1442,7 +1490,7 @@ function writeUserCrontab(content: string): void {
   execFileSync("crontab", ["-"], { input })
 }
 
-function stripManagedCronBlocks(content: string, blockIds: Set<string>): { content: string; removed: number } {
+export function stripManagedCronBlocks(content: string, blockIds: Set<string>): { content: string; removed: number } {
   const lines = content ? content.split(/\r?\n/) : []
   const retained: string[] = []
   const prefix = `# BEGIN ${CRON_MANAGED_PREFIX} `
@@ -1458,12 +1506,17 @@ function stripManagedCronBlocks(content: string, blockIds: Set<string>): { conte
     }
 
     const id = line.slice(prefix.length).trim()
-    let endIndex = lines.length - 1
+    let endIndex = -1
     for (let probe = index + 1; probe < lines.length; probe += 1) {
       if (lines[probe] === `${endPrefix}${id}`) {
         endIndex = probe
         break
       }
+    }
+    if (endIndex === -1) {
+      // A torn/foreign block is never permission to erase all following
+      // crontab lines. Refuse the entire update with the original intact.
+      throw new Error("Unterminated Scheduler crontab block; manual reconciliation required")
     }
 
     if (blockIds.has(id)) {
@@ -1509,7 +1562,7 @@ function installCronJob(job: Job): void {
 
   const blockId = cronBlockId(job)
   const current = readUserCrontab()
-  const stripped = stripManagedCronBlocks(current, new Set([blockId, cronLegacyBlockId(job)]))
+  const stripped = stripManagedCronBlocks(current, new Set([blockId]))
   const block = [cronBlockStart(blockId), createCronEntry(job), cronBlockEnd(blockId)].join("\n")
   const next = [stripped.content.trim(), block].filter(Boolean).join("\n\n")
   writeUserCrontab(next)
@@ -1519,7 +1572,7 @@ function uninstallCronJob(job: Job): void {
   if (!isCronAvailable()) return
 
   const current = readUserCrontab()
-  const stripped = stripManagedCronBlocks(current, new Set([cronBlockId(job), cronLegacyBlockId(job)]))
+  const stripped = stripManagedCronBlocks(current, new Set([cronBlockId(job)]))
   if (stripped.removed === 0) return
   writeUserCrontab(stripped.content)
 }
@@ -2164,6 +2217,7 @@ function normalizeJob(raw: unknown): Job | null {
     source: typeof raw.source === "string" ? raw.source : undefined,
     workdir: typeof raw.workdir === "string" ? raw.workdir : undefined,
     timeoutSeconds: typeof raw.timeoutSeconds === "number" ? raw.timeoutSeconds : undefined,
+    executionAuthority: raw.executionAuthority as FixtureAuthority | undefined,
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString(),
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : undefined,
     lastRunAt: typeof raw.lastRunAt === "string" ? raw.lastRunAt : undefined,
@@ -2390,6 +2444,10 @@ function getOpencodeVersion(opencodePath: string): string | null {
 }
 
 function runJobNow(job: Job): { startedAt: string; logPath: string; pid?: number; job: Job | null } {
+  if (!job.invocation || !verifyFixtureAuthority(job.executionAuthority,
+      job.invocation.command, job.invocation.args)) {
+    throw new Error(BUDGET_DENIAL)
+  }
   ensureDir(LOGS_DIR)
   ensureDir(scopeLogsDir(job.scopeId || deriveScopeId(job.workdir || homedir())))
   const startedAt = new Date().toISOString()
@@ -2769,6 +2827,7 @@ export const SchedulerPlugin: Plugin = async () => {
             // Snapshot invocation for supervised scheduled runs.
             try {
               job.invocation = buildOpencodeArgs(job)
+             job.executionAuthority = fixtureAuthority(job.invocation.command, job.invocation.args)
             } catch (error) {
               const msg = error instanceof Error ? error.message : String(error)
               return errorResult(format, `Failed to build invocation: ${msg}`)
@@ -3166,6 +3225,7 @@ Commands:
           // Keep scheduled invocation snapshot up-to-date.
           try {
             updatedJob.invocation = buildOpencodeArgs(updatedJob)
+            updatedJob.executionAuthority = fixtureAuthority(updatedJob.invocation.command, updatedJob.invocation.args)
           } catch (error) {
             const msg = error instanceof Error ? error.message : String(error)
             return errorResult(format, `Failed to build invocation: ${msg}`)

@@ -4,8 +4,47 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { spawnSync, spawn } from "node:child_process"
 import { windowsExecutable, windowsArgument, windowsTaskAction } from "../src/windows"
+import { fixtureAuthority } from "../src/execution-authority"
+import { createHash } from "node:crypto"
+
+const fakeApproval = (exe: string, args: string[]) => fixtureAuthority(exe, args, {
+  GITHUB_ACTIONS: "true",
+  OPENCODE_SCHEDULER_CI_NO_INFERENCE: "acknowledged-fixture-only",
+  OPENCODE_SCHEDULER_OPENCODE_PATH: exe,
+})
 
 describe("Windows scheduler without OS task changes", () => {
+  test("forged zero-budget record cannot authorize arbitrary Node JavaScript", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "scheduler-forged-no-inference-"))
+    try {
+      const jobs = path.join(root, "scheduler", "scopes", "forged", "jobs")
+      mkdirSync(jobs, { recursive: true })
+      const exe = path.join(root, "opencode.exe")
+      linkSync(process.execPath, exe)
+      const args = ["-e", "console.log('UNAPPROVED_EXECUTION')", "run", "--", "test"]
+      const digest = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex")
+      const file = path.join(jobs, "one.json")
+      writeFileSync(file, JSON.stringify({
+        scopeId: "forged", slug: "one", workdir: root, timeoutSeconds: 10,
+        invocation: { command: exe, args },
+        executionAuthority: {
+          kind: "isolated-no-inference-fixture",
+          executableSha256: digest(readFileSync(exe)),
+          invocationSha256: digest(JSON.stringify(args)),
+          expiresAt: Date.now() + 60000,
+          maxInferenceTokens: 0, maxCostUsd: 0,
+        },
+      }))
+      const result = spawnSync(process.execPath, [path.resolve("dist/windows-runner.cjs"), file],
+        { timeout: 10000, encoding: "utf8" })
+      expect(result.status).toBe(77)
+      const persisted = JSON.parse(readFileSync(file, "utf8"))
+      expect(persisted.lastRunError).toMatch(/no verified zero-inference authority/)
+      const log = path.join(root, "logs", "scheduler", "forged", "one.log")
+      expect(existsSync(log) ? readFileSync(log, "utf8") : "").not.toContain("UNAPPROVED_EXECUTION")
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
   test("resolves absolute executables rather than .cmd shims", () => {
     const files = new Set(["C:\\Tools\\opencode.exe"])
     const fakeWhere = () => "C:\\Tools\\opencode.cmd\r\nC:\\Tools\\opencode.exe\r\n"
@@ -29,8 +68,10 @@ describe("Windows scheduler without OS task changes", () => {
       const exe = path.join(root, "opencode.exe")
       linkSync(process.execPath, exe)
       const file = path.join(jobs, "one.json")
+      const args = ["-e", "console.log('RACE_CHILD');setTimeout(()=>{},1500)", "run", "--", "test"]
       writeFileSync(file, JSON.stringify({ scopeId: "race", slug: "one", workdir: root,
-        invocation: { command: exe, args: ["-e", "console.log('RACE_CHILD');setTimeout(()=>{},1500)", "run", "--", "test"] } }))
+        invocation: { command: exe, args },
+        executionAuthority: fakeApproval(exe, args) }))
       const runner = path.resolve("dist/windows-runner.cjs")
       const first = spawn(process.execPath, [runner, file], { stdio: "ignore" })
       const firstExited = new Promise<number>((resolve) => first.once("close", (code) => resolve(code ?? 1)))
@@ -54,9 +95,20 @@ describe("Windows scheduler without OS task changes", () => {
       const exe = path.join(root, "opencode.exe")
       linkSync(process.execPath, exe)
       const file = path.join(jobs, "one.json")
+      const args = ["-e", "setTimeout(()=>{},30000)", "run", "--", "test"]
       writeFileSync(file, JSON.stringify({ scopeId: "timeout", slug: "one", workdir: root,
-        invocation: { command: exe, args: ["-e", "setTimeout(()=>{},30000)", "run", "--", "test"] }, timeoutSeconds: 1 }))
+        invocation: { command: exe, args }, timeoutSeconds: 1,
+        executionAuthority: fakeApproval(exe, args) }))
       const result = spawnSync(process.execPath, [path.resolve("dist/windows-runner.cjs"), file], { timeout: 9000, encoding: "utf8" })
+      if (result.status !== 124) {
+        const log = path.join(root, "logs", "scheduler", "timeout", "one.log")
+        console.error("TIMEOUT_TEST_DIAG", JSON.stringify({
+          status: result.status, signal: result.signal, error: result.error?.message,
+          stdout: result.stdout?.slice(-300), stderr: result.stderr?.slice(-300),
+          job: readFileSync(file, "utf8").slice(-450),
+          log: existsSync(log) ? readFileSync(log, "utf8").slice(-1000) : "missing",
+        }))
+      }
       expect(result.status).toBe(124)
       expect(JSON.parse(readFileSync(file, "utf8")).lastRunStatus).toBe("failed")
       expect(existsSync(path.join(root, "scheduler", "scopes", "timeout", "locks", "one.lock"))).toBe(false)
@@ -98,7 +150,8 @@ describe("Windows scheduler without OS task changes", () => {
       expect(readFileSync(path.join(root, "logs", "scheduler", "duration", "one.log"), "utf8"))
         .not.toContain("SHOULD_NOT_EXECUTE")
       expect(existsSync(path.join(root, "scheduler", "scopes", "duration", "locks", "one.lock"))).toBe(false)
-      writeFileSync(file, JSON.stringify({ ...contents, timeoutSeconds: undefined }))
+      writeFileSync(file, JSON.stringify({ ...contents, timeoutSeconds: undefined,
+        executionAuthority: fakeApproval(exe, contents.invocation.args) }))
       const legacy = spawnSync(process.execPath, [runner, file], { timeout: 5000 })
       expect(legacy.status).toBe(0)
       expect(JSON.parse(readFileSync(file, "utf8")).lastRunStatus).toBe("success")
@@ -127,9 +180,10 @@ describe("Windows scheduler without OS task changes", () => {
       const fakeOpencode = path.join(root, "opencode.exe")
       linkSync(process.execPath, fakeOpencode)
       const file = path.join(jobs, "smoke.json")
+      const args = ["-e", "console.log('SCHEDULER_SMOKE_OK')", "run", "--", "test"]
       writeFileSync(file, JSON.stringify({ scopeId: "scope-a", slug: "smoke", workdir: workspace,
-        invocation: { command: fakeOpencode, args: ["-e", "console.log('SCHEDULER_SMOKE_OK')", "run", "--", "test"] },
-        timeoutSeconds: 10 }))
+        invocation: { command: fakeOpencode, args },
+        timeoutSeconds: 10, executionAuthority: fakeApproval(fakeOpencode, args) }))
       const result = spawnSync(process.execPath, [path.resolve("dist/windows-runner.cjs"), file], { encoding: "utf8", timeout: 10000 })
       expect(result.status).toBe(0)
       const after = JSON.parse(readFileSync(file, "utf8"))

@@ -16,7 +16,12 @@ if (!/^\\OpenCode\\opencode-job-acl-[a-f0-9]{12}$/i.test(foreign ?? "") ||
     !output || !path.isAbsolute(output) || existsSync(output)) throw new Error("Invalid foreign fixture identity or output")
 const shell = (...args) => spawnSync("schtasks.exe", args, { encoding: "utf8", windowsHide: true, timeout: 15000 })
 if (shell("/Query", "/TN", foreign).status !== 0) throw new Error("Foreign account task is not visible before native plugin operation")
-const root = mkdtempSync(path.join(tmpdir(), "scheduler-acl-native-"))
+// schtasks.exe /TR is bounded to 260 characters. The ordinary GitHub TEMP
+// tree is deeply nested; use a short, uniquely created path on this disposable
+// runner drive instead of relaxing the production action-length guard.
+const drive = process.env.SystemDrive ?? "C:"
+if (!/^[A-Z]:$/i.test(drive)) throw new Error("Unverifiable Windows system drive")
+const root = mkdtempSync(path.win32.join(`${drive}\\`, "sa-"))
 const workspace = path.join(root, "workspace")
 const home = path.join(root, "home")
 mkdirSync(workspace)

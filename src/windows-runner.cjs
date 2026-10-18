@@ -131,7 +131,20 @@ if (!invocation || typeof invocation.command !== "string" || !path.win32.isAbsol
   try {
     const actual = createHash("sha256").update(fs.readFileSync(invocation.command)).digest("hex");
     const argvHash = createHash("sha256").update(JSON.stringify(invocation.args)).digest("hex");
-    return actual === authority.executableSha256 && argvHash === authority.invocationSha256;
+    const nodeHash = createHash("sha256").update(fs.readFileSync(process.execPath)).digest("hex");
+    const synthetic = invocation.args[0] === "-e" &&
+      invocation.args[2] === "run" && invocation.args[3] === "--" &&
+      invocation.args.length === 5 &&
+      (["console.log('RACE_CHILD');setTimeout(()=>{},1500)",
+        "setTimeout(()=>{},30000)",
+        "console.log('SHOULD_NOT_EXECUTE')",
+        "console.log('SCHEDULER_SMOKE_OK')"].includes(invocation.args[1]) ||
+       /^console\.log\('OS_CI_(MANUAL|TIMED)_PASS'\)$/.test(invocation.args[1]));
+    // Registered-but-not-run fake native OpenCode "run" jobs intentionally
+    // remain unexecutable: Node could otherwise resolve a hostile ./run file.
+    return actual === authority.executableSha256 && actual === nodeHash &&
+      path.basename(invocation.command).toLowerCase() === "opencode.exe" &&
+      argvHash === authority.invocationSha256 && synthetic;
   } catch { return false; }
 })()) {
   finish("failed", 77, "no verified zero-inference authority; token/cost budgets cannot be enforced");

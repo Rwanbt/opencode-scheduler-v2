@@ -28,6 +28,31 @@ export function hashInvocation(args: string[]): string {
   return createHash("sha256").update(JSON.stringify(args)).digest("hex")
 }
 
+const syntheticNodeCode = (source: unknown): boolean =>
+  typeof source === "string" &&
+  (source === "console.log('RACE_CHILD');setTimeout(()=>{},1500)" ||
+   source === "setTimeout(()=>{},30000)" ||
+   source === "console.log('SHOULD_NOT_EXECUTE')" ||
+   source === "console.log('SCHEDULER_SMOKE_OK')" ||
+   /^console\.log\('OS_CI_(MANUAL|TIMED)_PASS'\)$/.test(source))
+
+// A digest of an arbitrary user-selected program is not proof it cannot use
+// a provider. Restrict test fixtures to known synthetic, non-OpenCode bodies.
+export function isSyntheticFixture(command: string, args: string[]): boolean {
+  try {
+    if (process.platform === "win32") {
+      return path.basename(command).toLowerCase() === "opencode.exe" &&
+        hashExecutable(command) === hashExecutable(process.execPath) &&
+        (args[0] === "run" && args[1] === "--" ||
+         (args[0] === "-e" && syntheticNodeCode(args[1]) &&
+          args[2] === "run" && args[3] === "--" && args.length === 5))
+    }
+    return path.basename(command) === "fake-opencode" &&
+      readFileSync(command, "utf8") === "#!/bin/sh\nprintf 'LAUNCHD_NO_INFERENCE_OK\\n'\n" &&
+      args[0] === "run" && args[1] === "--"
+  } catch { return false }
+}
+
 // Only the explicitly prepared, non-inference CI fixture may exercise the OS
 // scheduler. These variables are set by test harnesses, not tool arguments.
 // This is a functional CI exception, NOT a production authorization API.
@@ -37,7 +62,8 @@ export function fixtureAuthority(command: string, args: string[], env: NodeJS.Pr
       env.OPENCODE_SCHEDULER_CI_NO_INFERENCE !== "acknowledged-fixture-only" ||
       !env.OPENCODE_SCHEDULER_OPENCODE_PATH ||
       !path.isAbsolute(command) ||
-      path.resolve(command) !== path.resolve(env.OPENCODE_SCHEDULER_OPENCODE_PATH)) {
+      path.resolve(command) !== path.resolve(env.OPENCODE_SCHEDULER_OPENCODE_PATH) ||
+      !isSyntheticFixture(command, args)) {
     throw new Error(BUDGET_DENIAL)
   }
   return {
@@ -62,7 +88,11 @@ export function verifyFixtureAuthority(authority: unknown, command: string, args
     return false
   }
   try {
+    // On Windows a Node copy executing "run" might load a local script.
+    // The OS registration fixture can be minted, but only known -e proofs run.
     return path.isAbsolute(command) &&
+      !(process.platform === "win32" && args[0] !== "-e") &&
+      isSyntheticFixture(command, args) &&
       hashExecutable(command) === a.executableSha256 &&
       hashInvocation(args) === a.invocationSha256
   }

@@ -68,6 +68,15 @@ describe("Windows scheduler without OS task changes", () => {
         invocation: { command: exe, args }, timeoutSeconds: 1,
         executionAuthority: fakeApproval(exe, args) }))
       const result = spawnSync(process.execPath, [path.resolve("dist/windows-runner.cjs"), file], { timeout: 9000, encoding: "utf8" })
+      if (result.status !== 124) {
+        const log = path.join(root, "logs", "scheduler", "timeout", "one.log")
+        console.error("TIMEOUT_TEST_DIAG", JSON.stringify({
+          status: result.status, signal: result.signal, error: result.error?.message,
+          stdout: result.stdout?.slice(-300), stderr: result.stderr?.slice(-300),
+          job: readFileSync(file, "utf8").slice(-450),
+          log: existsSync(log) ? readFileSync(log, "utf8").slice(-1000) : "missing",
+        }))
+      }
       expect(result.status).toBe(124)
       expect(JSON.parse(readFileSync(file, "utf8")).lastRunStatus).toBe("failed")
       expect(existsSync(path.join(root, "scheduler", "scopes", "timeout", "locks", "one.lock"))).toBe(false)

@@ -57,6 +57,10 @@ function isolatedEnv() {
   }
 }
 
+// Native package imports may capture profile paths at module initialization.
+// Set the disposable environment before npm installation and all imports.
+Object.assign(process.env, isolatedEnv())
+
 function cli(args, cwd) {
   const scoped = args[0] === "api" ? [...args, "--header", `x-opencode-directory:${cwd}`] : args
   return run("opencode", scoped, { cwd, env: isolatedEnv(), timeout: 60_000 })
@@ -132,9 +136,6 @@ try {
     specs.push(adapter.replaceAll("\\", "/"))
   }
   assert.equal(new Set(expected).size, 3, "Plugin IDs must not collide")
-  // The packaged engine reads homedir at execution time. Redirect this test
-  // process before its first tool invocation, including in package-only mode.
-  Object.assign(process.env, isolatedEnv())
   // Exercise the actual packaged Scheduler V2 registry twice in one process.
   // Only read-only and denied calls are issued: no persistent OS jobs.
   const registries = await Promise.all(projects.map(async (project) => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { tmpdir, homedir } from "node:os"
 import path from "node:path"
 
 // Direct engine regression test in a disposable host only. No user account,
@@ -9,16 +9,21 @@ if (!["linux", "darwin"].includes(process.platform) || process.env.GITHUB_ACTION
   throw new Error("Manual-invocation E2E is restricted to ephemeral GitHub POSIX hosts")
 }
 const root = mkdtempSync(path.join(tmpdir(), "scheduler-approved-invocation-"))
-const home = path.join(root, "home")
+// Set HOME BEFORE Bun starts, not after loading the OS module. On some Bun
+// builds homedir() is cached at startup; mutating env in-process is not isolation.
+const home = process.env.SCHEDULER_MANUAL_FIXTURE_HOME
+if (!home || !path.isAbsolute(home) || path.resolve(home) !== path.resolve(process.env.HOME ?? "") ||
+    homedir() !== home || home === path.parse(home).root) {
+  throw new Error("Manual-invocation E2E requires a separate pre-start disposable HOME")
+}
 const project = path.join(root, "isolated-project")
 const fake = path.join(root, "fake-opencode")
 const old = { ...process.env }
-mkdirSync(home)
+mkdirSync(home, { recursive: true })
 mkdirSync(project)
 writeFileSync(fake, "#!/bin/sh\nprintf 'LAUNCHD_NO_INFERENCE_OK\\n'\n")
 chmodSync(fake, 0o700)
 Object.assign(process.env, {
-  HOME: home, USERPROFILE: home,
   OPENCODE_SCHEDULER_OPENCODE_PATH: fake,
   OPENCODE_SCHEDULER_CI_NO_INFERENCE: "acknowledged-fixture-only",
 })

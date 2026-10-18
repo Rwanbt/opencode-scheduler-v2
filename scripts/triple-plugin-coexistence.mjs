@@ -157,8 +157,24 @@ try {
     await assert.rejects(registry.get("list_jobs").execute({ allScopes: true }, {}), /Cross-project/)
     await assert.rejects(registry.get("schedule_job").execute({ name: "forbidden", schedule: "0 9 * * *",
       prompt: "NO INFERENCE", workdir: projects[1 - i] }, {}), /active project/)
-    const missing = await registry.get("run_job").execute({ name: "non-existent-fixture" }, {})
-    assert.match(missing.content, /not found/i)
+    // The integrated budget governor changes native semantics deliberately:
+    // no actual run, update, or new recurring inference is permitted without
+    // a certified provider budget. Prove denial, not a fake "not found" result.
+    await assert.rejects(
+      registry.get("run_job").execute({ name: "non-existent-fixture" }, {}),
+      /token\/cost budget authority/,
+    )
+    await assert.rejects(
+      registry.get("update_job").execute({ name: "non-existent-fixture", schedule: "0 10 * * *" }, {}),
+      /token\/cost budget authority/,
+    )
+    await assert.rejects(
+      registry.get("schedule_job").execute({
+        name: "no-budget-allowed", schedule: "0 9 * * *",
+        prompt: "NO INFERENCE", workdir: projects[i],
+      }, {}),
+      /token\/cost budget authority/,
+    )
   }))
   // The published Loop entry must really register /daemon and honour its
   // server lifecycle. This fake host never invokes a model or shell command.

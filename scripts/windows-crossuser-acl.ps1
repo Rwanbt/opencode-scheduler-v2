@@ -58,7 +58,10 @@ try {
   # standard account sufficient rights to register *its own* test task.
   $dacl = $folder.GetSecurityDescriptor(4)
   if (-not $dacl.StartsWith('D:')) { throw 'Cannot inspect disposable folder DACL' }
-  $folder.SetSecurityDescriptor(($dacl + '(A;;GA;;;' + $sid + ')'), 4)
+  # ITaskFolder.SetSecurityDescriptor flags is reserved for
+  # TASK_DONT_ADD_PRINCIPAL_ACE (0x10); DACL_SECURITY_INFORMATION (4) is
+  # a GetSecurityDescriptor flag and is invalid here.
+  $folder.SetSecurityDescriptor(($dacl + '(A;;GA;;;' + $sid + ')'), 0)
   $credential = New-Object Security.Management.Automation.PSCredential("$env:COMPUTERNAME\$account", $securePassword)
   $child = Join-Path $PSScriptRoot 'windows-crossuser-child.ps1'
   $argsLine = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $child + '" -TaskName "' + $taskName + '" -ReportPath "' + $childProof + '"'

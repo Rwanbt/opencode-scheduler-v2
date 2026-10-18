@@ -44,7 +44,7 @@ const clear = () => {
 }
 const writeJob = () => {
   const digest = createHash("sha256").update(readFileSync(fake)).digest("hex")
-  assert.equal(digest, "ee17f328e60e0381dbdae2f6278db656589c03aaa89762a3fe8596077ad44ea8")
+  assert.equal(digest, "e81115f84089291aa4968cb338ce2c19446637777b549d792723dd8215c9513b")
   const invDigest = createHash("sha256").update(JSON.stringify(args)).digest("hex")
   writeFileSync(jobPath, JSON.stringify({
     scopeId: scope, slug, name: slug, schedule: "* * * * *", workdir: project, timeoutSeconds: 12,

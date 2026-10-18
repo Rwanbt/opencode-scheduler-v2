@@ -1,0 +1,41 @@
+name: Windows Cross-User ACL Qualification (Disposable)
+on:
+  pull_request:
+    paths:
+      - 'scripts/windows-crossuser-*'
+      - 'scripts/windows-acl-verify.ts'
+      - 'tests/windows-acl-evidence.test.ts'
+      - 'src/windows-acl-evidence.ts'
+      - '.github/workflows/windows-crossuser-acl-qualification.yml'
+  workflow_dispatch:
+    inputs:
+      confirm_disposable:
+        description: 'Confirm a disposable github-hosted Windows runner only'
+        type: boolean
+        default: false
+        required: true
+permissions:
+  contents: read
+jobs:
+  disposable-cross-user:
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.head_ref == 'test/windows-crossuser-acl-w1-20261018' &&
+       github.base_ref == 'feat/scheduler-rc-integrated-20261018') ||
+      (github.event_name == 'workflow_dispatch' && inputs.confirm_disposable == true)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run build
+      - run: bun test tests/windows-acl-evidence.test.ts
+      - name: Create genuine second local account, prove nondeletion, tear down
+        shell: powershell
+        run: ./scripts/windows-crossuser-acl.ps1 -ConfirmEphemeralRunner

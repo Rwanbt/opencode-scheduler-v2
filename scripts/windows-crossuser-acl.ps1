@@ -40,7 +40,9 @@ try {
     $hresult = '{0:X8}' -f ($_.Exception.HResult -band 0xFFFFFFFF)
     if ($hresult -notin @('80070002', '80070003')) { throw }
   }
-  $password = ([Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N'))
+  # Hex UUIDs can contain only digits and lowercase characters; Windows
+  # Password Complexity Policy rejects them. Include all required classes.
+  $password = ('A!z9' + [Guid]::NewGuid().ToString('N') + '#Q7' + [Guid]::NewGuid().ToString('N'))
   $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
   $null = New-LocalUser -Name $account -Password $securePassword -PasswordNeverExpires -UserMayNotChangePassword -Description 'Ephemeral OpenCode ACL test only'
   $userCreated = $true

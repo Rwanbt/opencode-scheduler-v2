@@ -28,7 +28,7 @@ writeFileSync(path.join(consumer, "package.json"), JSON.stringify({ private: tru
 function run(exe, args, { cwd = root, env = process.env, timeout = 180_000 } = {}) {
   const result = spawnSync(exe, args, {
     cwd, env, timeout, encoding: "utf8", windowsHide: true,
-    maxBuffer: 4 * 1024 * 1024, shell: process.platform === "win32" && exe === "npm",
+    maxBuffer: 4 * 1024 * 1024, shell: process.platform === "win32" && ["npm", "opencode"].includes(exe),
   })
   if (result.error || result.status !== 0) {
     throw new Error(`${exe} ${args.join(" ")} failed (${result.status}): ${result.error?.message || ""}\n${result.stderr?.slice(0, 1800) || ""}\n${result.stdout?.slice(0, 1000) || ""}`)
@@ -62,6 +62,7 @@ function cli(args, cwd) {
 function pluginIDs(output) {
   const doc = JSON.parse(output)
   assert.ok(Array.isArray(doc?.data), "GET /api/plugin must contain an array")
+  if (!doc.data.length) console.log("NATIVE_INVENTORY_EMPTY: isolated CLI returned zero plugin records")
   for (const item of doc.data) {
     assert.notEqual(item?.state?.status ?? item?.status, "failed", `Rejected plugin: ${JSON.stringify(item)}`)
   }
@@ -108,7 +109,9 @@ try {
     expected.push(plugin.id)
     const adapter = path.join(root, `plugin-${name}`)
     mkdirSync(adapter)
-    writeFileSync(path.join(adapter, "package.json"), JSON.stringify({ type: "module", name: `triple-${name}` }))
+    writeFileSync(path.join(adapter, "package.json"), JSON.stringify({
+      type: "module", name: `triple-${name}`, main: "./index.js", exports: { ".": "./index.js" },
+    }))
     writeFileSync(path.join(adapter, "index.js"), `export { default } from ${JSON.stringify(pathToFileURL(file).href)};\n`)
     specs.push(adapter.replaceAll("\\", "/"))
   }

@@ -39,6 +39,11 @@ jobs:
         run: node scripts/macos-launchd-e2e.mjs
       - if: runner.os != 'Windows'
         run: bun scripts/posix-supervisor-e2e.ts
+      - if: runner.os != 'Windows'
+        run: |
+          fixture_home="$(mktemp -d)"
+          trap 'rm -rf "$fixture_home"' EXIT
+          HOME="$fixture_home" SCHEDULER_MANUAL_FIXTURE_HOME="$fixture_home" bun scripts/manual-invocation-e2e.ts
       - run: npm pack --dry-run --json --ignore-scripts
   native-opencode-v2:
     strategy:

@@ -99,6 +99,25 @@ export function verifyFixtureAuthority(authority: unknown, command: string, args
   catch { return false }
 }
 
+// Approval of a persisted invocation must NEVER be reused to run a freshly
+// constructed command or user-supplied one-off override. Compare the actual
+// executable and every argument before opening logs or spawning a child.
+export function assertExactApprovedInvocation(
+  authority: unknown,
+  approved: { command: string; args: string[] } | undefined,
+  actual: { command: string; args: string[] },
+): void {
+  if (!approved || typeof approved.command !== "string" ||
+      typeof actual.command !== "string" ||
+      !Array.isArray(approved.args) || !Array.isArray(actual.args) ||
+      !path.isAbsolute(actual.command) ||
+      path.resolve(approved.command) !== path.resolve(actual.command) ||
+      JSON.stringify(approved.args) !== JSON.stringify(actual.args) ||
+      !verifyFixtureAuthority(authority, actual.command, actual.args)) {
+    throw new Error(BUDGET_DENIAL)
+  }
+}
+
 export function assertNativeExecutionAuthority(toolName: string): void {
   if (!["schedule_job", "update_job", "run_job"].includes(toolName)) return
   if ((process.env.GITHUB_ACTIONS !== "true" &&

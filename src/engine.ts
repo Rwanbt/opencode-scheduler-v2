@@ -22,7 +22,8 @@ import { createHash } from "node:crypto"
 import { delimiter } from "node:path"
 import { projectDirectory } from "./scope.js"
 import { windowsExecutable, windowsOpenCodeExecutable, windowsTaskAction } from "./windows.js"
-import { loadWindowsManifest, saveWindowsManifest, beginWindowsTask, confirmWindowsTask, windowsTasksToDelete } from "./windows-manifest.js"
+import { registerWindowsTasks, removeWindowsTasks, type WindowsTaskEffects } from "./windows-task-lifecycle.js"
+import { queryWindowsTaskState } from "./windows-task-probe.js"
 import { windowsJobRefPath, writeWindowsJobReference } from "./windows-job-ref.js"
 
 // Storage location - shared with other opencode tools
@@ -1320,22 +1321,32 @@ function uninstallSystemdJob(job: Job): void {
 
 // === WINDOWS TASK SCHEDULER ===
 
-function installWindowsJob(job: Job): void {
-  uninstallWindowsJob(job)
-  const definitions = cronToWindowsTaskDefinitions(job)
-  const file = windowsManifestPath(job)
-  let state = { scopeId: job.scopeId || deriveScopeId(job.workdir || homedir()),
-    slug: job.slug, names: definitions.map((task) => task.name), registered: [] as string[], inFlight: null as string | null }
-  saveWindowsManifest(file, state)
-  for (const task of definitions) {
-    // Persist the in-flight task before calling schtasks: even if this host
-    // crashes after /Create but before recording success, no task is invisible.
-    state = beginWindowsTask(state, task.name)
-    saveWindowsManifest(file, state)
-    execFileSync("schtasks", task.args, { stdio: "ignore" })
-    state = confirmWindowsTask(state, task.name)
-    saveWindowsManifest(file, state)
+function windowsTaskEffects(): WindowsTaskEffects {
+  return {
+    inspect: queryWindowsTaskState,
+    create(name, args) {
+      execFileSync("schtasks", args, { stdio: "ignore" })
+      // A successful process exit cannot prove that the task exists.
+      if (queryWindowsTaskState(name) !== "present") {
+        throw new Error(`Windows task ${name} /Create succeeded but registration remains unverified`)
+      }
+    },
+    remove(name) { execFileSync("schtasks", ["/Delete", "/TN", name, "/F"], { stdio: "ignore" }) },
   }
+}
+
+function installWindowsJob(job: Job): void {
+  // Validate the complete new schedule before retiring an existing one.
+  const definitions = cronToWindowsTaskDefinitions(job)
+  uninstallWindowsJob(job)
+  const file = windowsManifestPath(job)
+  const scope = job.scopeId || deriveScopeId(job.workdir || homedir())
+  // Preparing definitions writes the short job reference; uninstall removes
+  // that old reference, so restore it before publishing new OS tasks.
+  const jobPath = jobFilePath(scope, job.slug)
+  writeWindowsJobReference(windowsJobRefPath(SCHEDULER_DIR, jobPath), jobPath)
+  registerWindowsTasks(file, scope, job.slug,
+    `${WINDOWS_TASK_ROOT}\\${windowsTaskBaseName(job)}`, definitions, windowsTaskEffects())
 }
 
 function windowsManifestPath(job: Job): string {
@@ -1344,17 +1355,11 @@ function windowsManifestPath(job: Job): string {
 
 function uninstallWindowsJob(job: Job): void {
   const file = windowsManifestPath(job)
-  // Without our ownership manifest, never enumerate or overwrite another
-  // user's legacy task. /Create without /F now fails on collisions.
+  // Without a verified manifest, do not infer ownership from a task name.
   if (!existsSync(file)) return
   const scope = job.scopeId || deriveScopeId(job.workdir || homedir())
-  const state = loadWindowsManifest(file, scope, job.slug, `${WINDOWS_TASK_ROOT}\\${windowsTaskBaseName(job)}`)
-  for (const name of windowsTasksToDelete(state)) {
-    try { execFileSync("schtasks", ["/Query", "/TN", name], { stdio: "ignore" }) }
-    catch { throw new Error(`Windows task ${name} cannot be verified; manifest preserved for manual reconciliation`) }
-    execFileSync("schtasks", ["/Delete", "/TN", name, "/F"], { stdio: "ignore" })
-  }
-  unlinkSync(file)
+  removeWindowsTasks(file, scope, job.slug,
+    `${WINDOWS_TASK_ROOT}\\${windowsTaskBaseName(job)}`, windowsTaskEffects())
   const jobPath = jobFilePath(scope, job.slug)
   const shortRef = windowsJobRefPath(SCHEDULER_DIR, jobPath)
   if (existsSync(shortRef)) unlinkSync(shortRef)

@@ -52,7 +52,7 @@ try {
   if (!tools.has("schedule_job") || !tools.has("delete_job") || !tools.has("list_jobs")) {
     throw new Error("OpenCode 2 tool registry missing expected Scheduler tools")
   }
-  const schedule = await tools.get("schedule_job").execute({ name: "e2e-disposable", schedule: "0 9 * * *",
+  const schedule = await tools.get("schedule_job").execute({ name: "e2e-disposable", schedule: "0 9,10 * * *",
     prompt: "NO INFERENCE: fixture only", workdir: workspace, format: "text" }, {})
   console.log("schedule_job=" + String(schedule.content).slice(0, 1100))
   const files = fixtureManifests()
@@ -65,6 +65,7 @@ try {
     for (const name of manifest.names ?? []) taskNames.add(name)
   }
   if (files.length !== 1) throw new Error(`Expected exactly one scoped Task Scheduler manifest, found ${files.length}`)
+  if (taskNames.size !== 2) throw new Error(`Expected two real Windows task registrations, found ${taskNames.size}`)
   if (!String(schedule.content).includes("Scheduled")) throw new Error("schedule_job returned an error")
   for (const name of taskNames) {
     const query = schtasks("/Query", "/TN", name)
@@ -82,6 +83,12 @@ try {
   const legacyCreate = schtasks("/Create", "/TN", legacyTaskName, "/TR", `"${process.execPath}" --version`, "/SC", "DAILY", "/ST", "23:59")
   if (legacyCreate.status !== 0) throw new Error(`Failed to install isolated legacy task fixture: ${legacyCreate.stderr}`)
   legacyTaskCreated = true
+  // Crash replay proof: one owned task was deleted after its successful
+  // registration but before our manifest could checkpoint the deletion.
+  const partiallyDeleted = [...taskNames][1]
+  if (schtasks("/Delete", "/TN", partiallyDeleted, "/F").status !== 0) {
+    throw new Error("Failed to simulate /Delete success before manifest checkpoint")
+  }
   const del = await tools.get("delete_job").execute({ name: "e2e-disposable" }, {})
   if (!String(del.content).includes("Deleted")) throw new Error(`Native delete_job failed: ${del.content}`)
   if (!existsSync(legacyFile) || readFileSync(legacyFile, "utf8") !== legacyProof) {

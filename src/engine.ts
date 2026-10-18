@@ -261,6 +261,14 @@ close $approved_fh;
 if ($approved_digest ne $approval->{executableSha256}) {
   die "Approved zero-inference executable changed\\n";
 }
+# An attacker-controlled SHA of an arbitrary shell command is not evidence of
+# non-inference. Allow only the immutable test harness scripts shipped in CI.
+# Both digests refer to benign stdout/permission/sleep fixtures, not OpenCode.
+if ($invocation->{command} !~ m{/fake-opencode$} ||
+    ($approved_digest ne 'ee17f328e60e0381dbdae2f6278db656589c03aaa89762a3fe8596077ad44ea8' &&
+     $approved_digest ne 'e81115f84089291aa4968cb338ce2c19446637777b549d792723dd8215c9513b')) {
+  die "Unrecognized zero-inference fixture executable\\n";
+}
 if (sha256_hex(JSON::PP->new->utf8->canonical->encode($invocation->{args})) ne
     $approval->{invocationSha256}) {
   die "Approved zero-inference invocation changed\\n";

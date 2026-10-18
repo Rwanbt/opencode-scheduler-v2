@@ -86,6 +86,16 @@ try {
   assert.equal(existsSync(proof), false)
   console.log("POSIX_UNAUTHORIZED_INFERENCE_DENIED_PASS")
 
+  const originalFixture = readFileSync(fakeCLI)
+  writeFileSync(fakeCLI, "#!/bin/sh\nprintf 'UNRECOGNIZED_FAKE\\n'\n")
+  save(job(10)) // Attacker also refreshes the stored digest; still denied.
+  const forgedFixture = run()
+  assert.notEqual(forgedFixture.status, 0)
+  assert.match(forgedFixture.stderr, /Unrecognized zero-inference fixture/)
+  assert.equal(existsSync(proof), false)
+  writeFileSync(fakeCLI, originalFixture)
+  console.log("POSIX_FORGED_FIXTURE_HASH_DENIED_PASS")
+
   // Previously an explicit zero or a corrupt string disabled the POSIX watchdog.
   for (const invalid of [0, -1, 3601, 1.5, null, "unbounded"]) {
     clearEffects()

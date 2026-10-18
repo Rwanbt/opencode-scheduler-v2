@@ -5,6 +5,7 @@ import path from "node:path"
 import { spawnSync, spawn } from "node:child_process"
 import { windowsExecutable, windowsArgument, windowsTaskAction } from "../src/windows"
 import { fixtureAuthority } from "../src/execution-authority"
+import { createHash } from "node:crypto"
 
 const fakeApproval = (exe: string, args: string[]) => fixtureAuthority(exe, args, {
   GITHUB_ACTIONS: "true",
@@ -13,6 +14,37 @@ const fakeApproval = (exe: string, args: string[]) => fixtureAuthority(exe, args
 })
 
 describe("Windows scheduler without OS task changes", () => {
+  test("forged zero-budget record cannot authorize arbitrary Node JavaScript", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "scheduler-forged-no-inference-"))
+    try {
+      const jobs = path.join(root, "scheduler", "scopes", "forged", "jobs")
+      mkdirSync(jobs, { recursive: true })
+      const exe = path.join(root, "opencode.exe")
+      linkSync(process.execPath, exe)
+      const args = ["-e", "console.log('UNAPPROVED_EXECUTION')", "run", "--", "test"]
+      const digest = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex")
+      const file = path.join(jobs, "one.json")
+      writeFileSync(file, JSON.stringify({
+        scopeId: "forged", slug: "one", workdir: root, timeoutSeconds: 10,
+        invocation: { command: exe, args },
+        executionAuthority: {
+          kind: "isolated-no-inference-fixture",
+          executableSha256: digest(readFileSync(exe)),
+          invocationSha256: digest(JSON.stringify(args)),
+          expiresAt: Date.now() + 60000,
+          maxInferenceTokens: 0, maxCostUsd: 0,
+        },
+      }))
+      const result = spawnSync(process.execPath, [path.resolve("dist/windows-runner.cjs"), file],
+        { timeout: 10000, encoding: "utf8" })
+      expect(result.status).toBe(77)
+      const persisted = JSON.parse(readFileSync(file, "utf8"))
+      expect(persisted.lastRunError).toMatch(/no verified zero-inference authority/)
+      const log = path.join(root, "logs", "scheduler", "forged", "one.log")
+      expect(existsSync(log) ? readFileSync(log, "utf8") : "").not.toContain("UNAPPROVED_EXECUTION")
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
   test("resolves absolute executables rather than .cmd shims", () => {
     const files = new Set(["C:\\Tools\\opencode.exe"])
     const fakeWhere = () => "C:\\Tools\\opencode.cmd\r\nC:\\Tools\\opencode.exe\r\n"

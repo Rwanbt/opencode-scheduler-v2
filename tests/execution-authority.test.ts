@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, linkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { BUDGET_DENIAL, fixtureAuthority, verifyFixtureAuthority, assertNativeExecutionAuthority } from "../src/execution-authority"
+import { BUDGET_DENIAL, fixtureAuthority, verifyFixtureAuthority, assertNativeExecutionAuthority, assertExactApprovedInvocation } from "../src/execution-authority"
 
 describe("fail-closed scheduled inference budget authority", () => {
   test("no ordinary model tool may authorize recurring or manual execution", () => {
@@ -31,6 +31,16 @@ describe("fail-closed scheduled inference budget authority", () => {
       expect(auth.maxCostUsd).toBe(0)
       expect(auth.maxInferenceTokens).toBe(0)
       expect(verifyFixtureAuthority(auth, exe, args)).toBe(true)
+      expect(() => assertExactApprovedInvocation(auth,
+        { command: exe, args }, { command: exe, args: [...args] })).not.toThrow()
+      expect(() => assertExactApprovedInvocation(auth,
+        { command: exe, args }, { command: process.execPath, args })).toThrow(BUDGET_DENIAL)
+      expect(() => assertExactApprovedInvocation(auth,
+        { command: exe, args }, { command: exe, args: [...args, "--model", "paid/provider"] })).toThrow(BUDGET_DENIAL)
+      expect(() => assertExactApprovedInvocation(auth,
+        { command: exe, args }, { command: exe, args: ["run", "--", "PAID_PROMPT"] })).toThrow(BUDGET_DENIAL)
+      expect(() => assertExactApprovedInvocation({ ...auth, expiresAt: Date.now() - 1 },
+        { command: exe, args }, { command: exe, args })).toThrow(BUDGET_DENIAL)
       expect(verifyFixtureAuthority(auth, exe, ["run", "--", "PAY_MODEL"])).toBe(false)
       expect(() => fixtureAuthority(exe, ["-e", "fetch('https://provider.example')", "run", "--", "test"], {
         GITHUB_ACTIONS: "true",

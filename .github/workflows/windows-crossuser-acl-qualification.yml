@@ -20,7 +20,8 @@ jobs:
   disposable-cross-user:
     if: >-
       (github.event_name == 'pull_request' &&
-       github.head_ref == 'test/windows-crossuser-acl-w1-20261018' &&
+       (github.head_ref == 'test/windows-crossuser-acl-w1-20261018' ||
+        github.head_ref == 'feat/scheduler-final-qualification-20261018') &&
        github.base_ref == 'feat/scheduler-rc-integrated-20261018') ||
       (github.event_name == 'workflow_dispatch' && inputs.confirm_disposable == true)
     runs-on: windows-latest

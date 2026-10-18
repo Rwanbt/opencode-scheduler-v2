@@ -21,7 +21,7 @@ import { fileURLToPath } from "url"
 import { createHash } from "node:crypto"
 import { delimiter } from "node:path"
 import { projectDirectory } from "./scope.js"
-import { fixtureAuthority, verifyFixtureAuthority, BUDGET_DENIAL, type FixtureAuthority } from "./execution-authority.js"
+import { fixtureAuthority, verifyFixtureAuthority, assertExactApprovedInvocation, BUDGET_DENIAL, type FixtureAuthority } from "./execution-authority.js"
 import { windowsExecutable, windowsOpenCodeExecutable, windowsTaskAction } from "./windows.js"
 import { registerWindowsTasks, removeWindowsTasks, type WindowsTaskEffects } from "./windows-task-lifecycle.js"
 import { queryWindowsTaskState } from "./windows-task-probe.js"
@@ -2444,9 +2444,17 @@ function getOpencodeVersion(opencodePath: string): string | null {
 }
 
 function runJobNow(job: Job): { startedAt: string; logPath: string; pid?: number; job: Job | null } {
-  if (!job.invocation || !verifyFixtureAuthority(job.executionAuthority,
-      job.invocation.command, job.invocation.args)) {
+  // The original code verified a persisted fixture then rebuilt a fresh
+  // OpenCode invocation (including arbitrary one-off overrides) and spawned
+  // it instead. Budget approval must apply to the ACTUAL process, byte-for-byte.
+  const invocation = buildOpencodeArgs(job)
+  if (!job.invocation) {
     throw new Error(BUDGET_DENIAL)
+  }
+  assertExactApprovedInvocation(job.executionAuthority, job.invocation, invocation)
+  if (!Number.isSafeInteger(job.timeoutSeconds ?? 1800) ||
+      (job.timeoutSeconds ?? 1800) < 1 || (job.timeoutSeconds ?? 1800) > 3600) {
+    throw new Error("Unattended timeout must be 1-3600 seconds")
   }
   ensureDir(LOGS_DIR)
   ensureDir(scopeLogsDir(job.scopeId || deriveScopeId(job.workdir || homedir())))
@@ -2457,13 +2465,15 @@ function runJobNow(job: Job): { startedAt: string; logPath: string; pid?: number
 
   logStream.write(`\n=== Manual run ${startedAt} ===\n`)
 
-  const { command, args } = buildOpencodeArgs(job)
+  const { command, args } = invocation
   let child: ChildProcess
   try {
     child = spawn(command, args, {
       cwd: workdir,
       env: buildRunEnvironment(),
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: (job.timeoutSeconds ?? 1800) * 1000,
+      killSignal: "SIGKILL",
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

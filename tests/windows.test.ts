@@ -4,6 +4,13 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { spawnSync, spawn } from "node:child_process"
 import { windowsExecutable, windowsArgument, windowsTaskAction } from "../src/windows"
+import { fixtureAuthority } from "../src/execution-authority"
+
+const fakeApproval = (exe: string, args: string[]) => fixtureAuthority(exe, args, {
+  GITHUB_ACTIONS: "true",
+  OPENCODE_SCHEDULER_CI_NO_INFERENCE: "acknowledged-fixture-only",
+  OPENCODE_SCHEDULER_OPENCODE_PATH: exe,
+})
 
 describe("Windows scheduler without OS task changes", () => {
   test("resolves absolute executables rather than .cmd shims", () => {
@@ -29,8 +36,10 @@ describe("Windows scheduler without OS task changes", () => {
       const exe = path.join(root, "opencode.exe")
       linkSync(process.execPath, exe)
       const file = path.join(jobs, "one.json")
+      const args = ["-e", "console.log('RACE_CHILD');setTimeout(()=>{},1500)", "run", "--", "test"]
       writeFileSync(file, JSON.stringify({ scopeId: "race", slug: "one", workdir: root,
-        invocation: { command: exe, args: ["-e", "console.log('RACE_CHILD');setTimeout(()=>{},1500)", "run", "--", "test"] } }))
+        invocation: { command: exe, args },
+        executionAuthority: fakeApproval(exe, args) }))
       const runner = path.resolve("dist/windows-runner.cjs")
       const first = spawn(process.execPath, [runner, file], { stdio: "ignore" })
       const firstExited = new Promise<number>((resolve) => first.once("close", (code) => resolve(code ?? 1)))
@@ -54,8 +63,10 @@ describe("Windows scheduler without OS task changes", () => {
       const exe = path.join(root, "opencode.exe")
       linkSync(process.execPath, exe)
       const file = path.join(jobs, "one.json")
+      const args = ["-e", "setTimeout(()=>{},30000)", "run", "--", "test"]
       writeFileSync(file, JSON.stringify({ scopeId: "timeout", slug: "one", workdir: root,
-        invocation: { command: exe, args: ["-e", "setTimeout(()=>{},30000)", "run", "--", "test"] }, timeoutSeconds: 1 }))
+        invocation: { command: exe, args }, timeoutSeconds: 1,
+        executionAuthority: fakeApproval(exe, args) }))
       const result = spawnSync(process.execPath, [path.resolve("dist/windows-runner.cjs"), file], { timeout: 9000, encoding: "utf8" })
       expect(result.status).toBe(124)
       expect(JSON.parse(readFileSync(file, "utf8")).lastRunStatus).toBe("failed")
@@ -98,7 +109,8 @@ describe("Windows scheduler without OS task changes", () => {
       expect(readFileSync(path.join(root, "logs", "scheduler", "duration", "one.log"), "utf8"))
         .not.toContain("SHOULD_NOT_EXECUTE")
       expect(existsSync(path.join(root, "scheduler", "scopes", "duration", "locks", "one.lock"))).toBe(false)
-      writeFileSync(file, JSON.stringify({ ...contents, timeoutSeconds: undefined }))
+      writeFileSync(file, JSON.stringify({ ...contents, timeoutSeconds: undefined,
+        executionAuthority: fakeApproval(exe, contents.invocation.args) }))
       const legacy = spawnSync(process.execPath, [runner, file], { timeout: 5000 })
       expect(legacy.status).toBe(0)
       expect(JSON.parse(readFileSync(file, "utf8")).lastRunStatus).toBe("success")
@@ -127,9 +139,10 @@ describe("Windows scheduler without OS task changes", () => {
       const fakeOpencode = path.join(root, "opencode.exe")
       linkSync(process.execPath, fakeOpencode)
       const file = path.join(jobs, "smoke.json")
+      const args = ["-e", "console.log('SCHEDULER_SMOKE_OK')", "run", "--", "test"]
       writeFileSync(file, JSON.stringify({ scopeId: "scope-a", slug: "smoke", workdir: workspace,
-        invocation: { command: fakeOpencode, args: ["-e", "console.log('SCHEDULER_SMOKE_OK')", "run", "--", "test"] },
-        timeoutSeconds: 10 }))
+        invocation: { command: fakeOpencode, args },
+        timeoutSeconds: 10, executionAuthority: fakeApproval(fakeOpencode, args) }))
       const result = spawnSync(process.execPath, [path.resolve("dist/windows-runner.cjs"), file], { encoding: "utf8", timeout: 10000 })
       expect(result.status).toBe(0)
       const after = JSON.parse(readFileSync(file, "utf8"))

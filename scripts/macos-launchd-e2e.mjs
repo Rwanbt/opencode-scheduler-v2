@@ -17,6 +17,7 @@ writeFileSync(fakeCLI, "#!/bin/sh\nprintf 'LAUNCHD_NO_INFERENCE_OK\\n'\n")
 chmodSync(fakeCLI, 0o700)
 process.env.HOME = home
 process.env.OPENCODE_SCHEDULER_OPENCODE_PATH = fakeCLI
+process.env.OPENCODE_SCHEDULER_CI_NO_INFERENCE = "acknowledged-fixture-only"
 
 const { default: plugin } = await import(pathToFileURL(path.resolve("dist/index.js")).href)
 const tools = new Map()

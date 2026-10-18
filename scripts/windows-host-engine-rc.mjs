@@ -21,6 +21,8 @@ process.env.HOME = home
 process.env.APPDATA = path.join(home, "AppData", "Roaming")
 process.env.LOCALAPPDATA = path.join(home, "AppData", "Local")
 process.env.OPENCODE_SCHEDULER_OPENCODE_PATH = fakeCli
+process.env.OPENCODE_SCHEDULER_HOST_NO_INFERENCE = "explicit-disposable-task"
+process.env.OPENCODE_SCHEDULER_CI_NO_INFERENCE = "acknowledged-fixture-only"
 process.env.OPENCODE_SCHEDULER_NODE_PATH = process.execPath
 
 const runTask = (...args) => spawnSync("schtasks.exe", args, { encoding: "utf8", windowsHide: true, timeout: 12000 })

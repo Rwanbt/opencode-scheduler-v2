@@ -1,0 +1,45 @@
+name: Scheduler Loop Goal Native Coexistence
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-triple:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Rwanbt/opencode-loop
+          ref: d04c0df6c0e925a0e8b57edb056cd7676d79128a
+          path: loop-fork-reviewed
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+          cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: npm install -g @opencode/cli@2.0.32 --no-audit --no-fund
+
+      - name: Confirm three installable packages and isolated native activation
+        env:
+          SCHEDULER_TRIPLE_CI: '1'
+          SCHEDULER_TRIPLE_LOOP_SHA: d04c0df6c0e925a0e8b57edb056cd7676d79128a
+          SCHEDULER_TRIPLE_LOOP_ROOT: ${{ github.workspace }}/loop-fork-reviewed
+        run: node scripts/triple-plugin-coexistence.mjs

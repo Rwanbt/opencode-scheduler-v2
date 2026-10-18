@@ -11,7 +11,7 @@ $service.Connect()
 $folder = $service.GetFolder('\OpenCode')
 $leaf = $TaskName.Substring(10)
 try { $null = $folder.GetTask($leaf); throw 'Foreign fixture task already exists' }
-catch [System.Runtime.InteropServices.COMException] {
+catch {
   $hresult = '{0:X8}' -f ($_.Exception.HResult -band 0xFFFFFFFF)
   if ($hresult -notin @('80070002', '80070003')) { throw }
 }

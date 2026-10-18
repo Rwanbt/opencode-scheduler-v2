@@ -62,5 +62,12 @@ describe("OpenCode 2 plugin boundary", () => {
     await expect(registered.list_jobs.execute({ includeLegacy: "yes" }, {})).rejects.toThrow(/Cross-project/)
     await expect(registered.schedule_job.execute({ name: "unsafe", schedule: "0 9 * * *", workdir: path.resolve("foreign") }, {}))
       .rejects.toThrow(/active project/)
+    // Even an otherwise valid model-generated request must not create an OS
+    // task until a certified token/cost authority exists.
+    await expect(registered.schedule_job.execute({ name: "no-budget", schedule: "0 9 * * *",
+      prompt: "DO_NOT_RUN", workdir: home }, {})).rejects.toThrow(/token\/cost budget/)
+    await expect(registered.run_job.execute({ name: "no-budget" }, {})).rejects.toThrow(/token\/cost budget/)
+    await expect(registered.update_job.execute({ name: "no-budget", schedule: "0 10 * * *" }, {}))
+      .rejects.toThrow(/token\/cost budget/)
     } finally { rmSync(home, { recursive: true, force: true }) }
   })})

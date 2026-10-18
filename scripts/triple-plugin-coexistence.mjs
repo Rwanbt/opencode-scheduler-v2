@@ -23,6 +23,7 @@ const home = path.join(root, "home")
 const configDir = path.join(home, ".config", "opencode")
 const projects = [path.join(root, "workspace-a"), path.join(root, "workspace-b")]
 let disposableServiceStarted = false
+let primaryFailure = false
 for (const folder of [consumer, configDir, ...projects]) mkdirSync(folder, { recursive: true })
 writeFileSync(path.join(consumer, "package.json"), JSON.stringify({ private: true, type: "module" }))
 
@@ -102,7 +103,10 @@ try {
   const schedulerTarball = pack(schedulerRoot, "@rwanbt/opencode-scheduler-v2")
   const loopTarball = pack(loopRoot, "@rwanbt/opencode-loop")
   run("npm", ["install", "--omit=dev", "--omit=peer", "--ignore-scripts", "--no-audit", "--no-fund",
-    schedulerTarball, loopTarball, "@bybrawe/opencode-goal@1.3.49"], { cwd: consumer })
+    "--prefer-offline", "--fetch-retries=1", "--fetch-timeout=90000",
+    schedulerTarball, loopTarball, "@bybrawe/opencode-goal@1.3.49"], {
+    cwd: consumer, timeout: process.platform === "win32" ? 360_000 : 180_000,
+  })
 
   const entrypoints = [
     ["scheduler", ["@rwanbt", "opencode-scheduler-v2", "dist", "index.js"]],
@@ -243,10 +247,20 @@ try {
   }
   console.log("TRIPLE_NATIVE_PACKAGED_CLI_2_0_32_TWO_WORKSPACES_ROLLBACK_PASS")
   }
+} catch (error) {
+  primaryFailure = true
+  throw error
 } finally {
   if (disposableServiceStarted) {
     try { cli(["service", "stop"], projects[0]) }
     catch (error) { console.warn(`Isolated CI service stop failed: ${error.message}`) }
   }
-  rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 })
+  try { rmSync(root, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }) }
+  catch (error) {
+    // A Windows runner can retain a temporary npm consumer lock after npm exits.
+    // The ephemeral CI VM is destroyed after the job. Never mask the original
+    // activation failure with a secondary cleanup exception.
+    console.warn(`Ephemeral CI cleanup incomplete (${root}): ${error.message}`)
+    if (!primaryFailure && process.platform !== "win32") throw error
+  }
 }

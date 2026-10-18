@@ -1,0 +1,47 @@
+name: Scheduler POSIX Host Recovery Qualification
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  supervisor-recovery:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Real Perl supervisor with isolated zero-inference fake CLI
+        run: bun scripts/posix-host-recovery-e2e.ts
+  os-manager-boundary:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - name: Actual systemd/cron capability probe (no profile writes)
+        if: runner.os == 'Linux'
+        run: node scripts/posix-manager-probe.mjs
+      - name: Actual launchctl lifecycle with disposable LaunchAgent
+        if: runner.os == 'macOS'
+        run: node scripts/posix-launchd-host-lifecycle.mjs

@@ -1265,6 +1265,9 @@ function createSystemdService(job: Job): string {
     .map((arg) => `"${escapeSystemdArg(arg)}"`)
     .join(" ")
 
+  // systemd directives interpolate unit text. Reject control/newline injection
+  // and specifier expansion in values whose trust is only the job record.
+  for (const v of [job.name, workdir, enhancedPath, logFilePath, jobPath]) assertSafeSystemdValue(v)
   return `[Unit]
 Description=OpenCode Job: ${job.name}
 
@@ -1281,7 +1284,14 @@ WantedBy=default.target
 `
 }
 
+export function assertSafeSystemdValue(value: string): void {
+  if (typeof value !== "string" || /[\x00-\x1f\x7f%]/.test(value)) {
+    throw new Error("Unsafe control or specifier in systemd unit data")
+  }
+}
+
 function createSystemdTimer(job: Job): string {
+  assertSafeSystemdValue(job.name)
   const calendars = cronToSystemdCalendars(job.schedule)
   const calendarLines = calendars.map((calendar) => `OnCalendar=${calendar}`).join("\n")
 
@@ -1308,11 +1318,8 @@ function installSystemdJob(job: Job): void {
   const servicePath = join(SYSTEMD_USER_DIR, `opencode-job-${scopeId}-${job.slug}.service`)
   const timerPath = join(SYSTEMD_USER_DIR, `opencode-job-${scopeId}-${job.slug}.timer`)
 
-  // Also stop/disable legacy units (pre-scope)
-  try {
-    execSync(`systemctl --user stop opencode-job-${job.slug}.timer`, { stdio: "ignore" })
-    execSync(`systemctl --user disable opencode-job-${job.slug}.timer`, { stdio: "ignore" })
-  } catch {}
+  // Legacy unscoped units may belong to another project. Never touch them
+  // without an independent, explicit ownership/migration procedure.
 
   // Write service and timer
   writeFileSync(servicePath, createSystemdService(job))
@@ -1328,9 +1335,7 @@ function uninstallSystemdJob(job: Job): void {
   const scopeId = job.scopeId || deriveScopeId(job.workdir || homedir())
 
   const scopedTimerUnit = `opencode-job-${scopeId}-${job.slug}.timer`
-  const legacyTimerUnit = `opencode-job-${job.slug}.timer`
-
-  for (const timerUnit of [scopedTimerUnit, legacyTimerUnit]) {
+  for (const timerUnit of [scopedTimerUnit]) {
     try {
       execSync(`systemctl --user stop ${timerUnit}`, { stdio: "ignore" })
       execSync(`systemctl --user disable ${timerUnit}`, { stdio: "ignore" })
@@ -1339,10 +1344,9 @@ function uninstallSystemdJob(job: Job): void {
 
   const scopedServicePath = join(SYSTEMD_USER_DIR, `opencode-job-${scopeId}-${job.slug}.service`)
   const scopedTimerPath = join(SYSTEMD_USER_DIR, `opencode-job-${scopeId}-${job.slug}.timer`)
-  const legacyServicePath = join(SYSTEMD_USER_DIR, `opencode-job-${job.slug}.service`)
-  const legacyTimerPath = join(SYSTEMD_USER_DIR, `opencode-job-${job.slug}.timer`)
-
-  for (const p of [scopedServicePath, scopedTimerPath, legacyServicePath, legacyTimerPath]) {
+  // Legacy name-only service/timer units are explicitly out of scope; an
+  // unscoped matching slug is not evidence that this plugin owns them.
+  for (const p of [scopedServicePath, scopedTimerPath]) {
     if (existsSync(p)) {
       try {
         unlinkSync(p)
@@ -1478,7 +1482,7 @@ function writeUserCrontab(content: string): void {
   execFileSync("crontab", ["-"], { input })
 }
 
-function stripManagedCronBlocks(content: string, blockIds: Set<string>): { content: string; removed: number } {
+export function stripManagedCronBlocks(content: string, blockIds: Set<string>): { content: string; removed: number } {
   const lines = content ? content.split(/\r?\n/) : []
   const retained: string[] = []
   const prefix = `# BEGIN ${CRON_MANAGED_PREFIX} `
@@ -1494,12 +1498,17 @@ function stripManagedCronBlocks(content: string, blockIds: Set<string>): { conte
     }
 
     const id = line.slice(prefix.length).trim()
-    let endIndex = lines.length - 1
+    let endIndex = -1
     for (let probe = index + 1; probe < lines.length; probe += 1) {
       if (lines[probe] === `${endPrefix}${id}`) {
         endIndex = probe
         break
       }
+    }
+    if (endIndex === -1) {
+      // A torn/foreign block is never permission to erase all following
+      // crontab lines. Refuse the entire update with the original intact.
+      throw new Error("Unterminated Scheduler crontab block; manual reconciliation required")
     }
 
     if (blockIds.has(id)) {
@@ -1545,7 +1554,7 @@ function installCronJob(job: Job): void {
 
   const blockId = cronBlockId(job)
   const current = readUserCrontab()
-  const stripped = stripManagedCronBlocks(current, new Set([blockId, cronLegacyBlockId(job)]))
+  const stripped = stripManagedCronBlocks(current, new Set([blockId]))
   const block = [cronBlockStart(blockId), createCronEntry(job), cronBlockEnd(blockId)].join("\n")
   const next = [stripped.content.trim(), block].filter(Boolean).join("\n\n")
   writeUserCrontab(next)
@@ -1555,7 +1564,7 @@ function uninstallCronJob(job: Job): void {
   if (!isCronAvailable()) return
 
   const current = readUserCrontab()
-  const stripped = stripManagedCronBlocks(current, new Set([cronBlockId(job), cronLegacyBlockId(job)]))
+  const stripped = stripManagedCronBlocks(current, new Set([cronBlockId(job)]))
   if (stripped.removed === 0) return
   writeUserCrontab(stripped.content)
 }

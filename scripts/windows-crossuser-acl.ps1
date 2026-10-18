@@ -62,7 +62,7 @@ try {
   # TASK_DONT_ADD_PRINCIPAL_ACE (0x10); DACL_SECURITY_INFORMATION (4) is
   # a GetSecurityDescriptor flag and is invalid here.
   $folder.SetSecurityDescriptor(($dacl + '(A;;GA;;;' + $sid + ')'), 0)
-  $credential = New-Object Security.Management.Automation.PSCredential("$env:COMPUTERNAME\$account", $securePassword)
+  $credential = New-Object System.Management.Automation.PSCredential("$env:COMPUTERNAME\$account", $securePassword)
   $child = Join-Path $PSScriptRoot 'windows-crossuser-child.ps1'
   $argsLine = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $child + '" -TaskName "' + $taskName + '" -ReportPath "' + $childProof + '"'
   $process = Start-Process -FilePath "$PSHOME\powershell.exe" -Credential $credential -ArgumentList $argsLine -LoadUserProfile -Wait -PassThru -WindowStyle Hidden

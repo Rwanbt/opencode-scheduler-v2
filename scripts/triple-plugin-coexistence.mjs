@@ -22,6 +22,7 @@ const consumer = path.join(root, "consumer")
 const home = path.join(root, "home")
 const configDir = path.join(home, ".config", "opencode")
 const projects = [path.join(root, "workspace-a"), path.join(root, "workspace-b")]
+let disposableServiceStarted = false
 for (const folder of [consumer, configDir, ...projects]) mkdirSync(folder, { recursive: true })
 writeFileSync(path.join(consumer, "package.json"), JSON.stringify({ private: true, type: "module" }))
 
@@ -56,7 +57,8 @@ function isolatedEnv() {
 }
 
 function cli(args, cwd) {
-  return run("opencode", args, { cwd, env: isolatedEnv(), timeout: 60_000 })
+  const scoped = args[0] === "api" ? [...args, "--header", `x-opencode-directory:${cwd}`] : args
+  return run("opencode", scoped, { cwd, env: isolatedEnv(), timeout: 60_000 })
 }
 
 function pluginIDs(output) {
@@ -74,13 +76,23 @@ function commandNames(project) {
   const errors = []
   for (const route of ["/command", "/api/command"]) {
     try {
-      const doc = JSON.parse(cli(["api", "--standalone", "GET", route], project))
+      const doc = JSON.parse(cli(["api", "GET", route], project))
       const entries = Array.isArray(doc?.data) ? doc.data : Array.isArray(doc) ? doc : []
       if (!entries.length) throw new Error(`no command array at ${route}`)
       return entries.map((entry) => typeof entry === "string" ? entry : entry.name)
     } catch (error) { errors.push(`${route}: ${error.message}`) }
   }
   throw new Error(`Official OpenCode native command inventory unavailable: ${errors.join("; ")}`)
+}
+
+async function awaitPluginInventory(project, expected, present) {
+  let last = []
+  for (let attempt = 0; attempt < 15; attempt++) {
+    last = pluginIDs(cli(["api", "GET", "/api/plugin"], project))
+    if (expected.every((id) => last.includes(id) === present)) return last
+    await new Promise((resolve) => setTimeout(resolve, 400))
+  }
+  throw new Error(`Expected native plugin ${present ? "activation" : "rollback"} failed in ${project}; observed: ${last.join(", ")}`)
 }
 
 try {
@@ -203,8 +215,13 @@ try {
   const sources = JSON.parse(cli(["debug", "config"], projects[0]))
   assert.ok(sources.some((source) => source.type === "document" && source.path.startsWith(configDir)),
     "Official CLI did not read isolated configuration")
+  // A one-shot --standalone API request does not initialize the native plugin
+  // inventory in 2.0.32. Use the proven reload/service route on an ephemeral CI
+  // profile only; always stop that profile's service in finally below.
+  disposableServiceStarted = true
+  cli(["reload"], projects[0])
   for (const project of projects) {
-    const ids = pluginIDs(cli(["api", "--standalone", "GET", "/api/plugin"], project))
+    const ids = await awaitPluginInventory(project, expected, true)
     for (const id of expected) assert.ok(ids.includes(id), `${path.basename(project)} missing ${id}: ${ids.join(", ")}`)
     const commands = commandNames(project)
     for (const name of ["loop", "daemon", "goal"]) {
@@ -213,8 +230,9 @@ try {
     console.log(`TRIPLE_NATIVE_ACTIVE project=${path.basename(project)} ids=${expected.join(",")}`)
   }
   writeFileSync(path.join(configDir, "opencode.jsonc"), JSON.stringify({ plugins: [] }))
+  cli(["reload"], projects[0])
   for (const project of projects) {
-    const ids = pluginIDs(cli(["api", "--standalone", "GET", "/api/plugin"], project))
+    const ids = await awaitPluginInventory(project, expected, false)
     for (const id of expected) assert.ok(!ids.includes(id), `Rollback retained ${id} in ${project}`)
   }
   run("npm", ["uninstall", "--ignore-scripts", "--no-audit", "--no-fund",
@@ -226,5 +244,9 @@ try {
   console.log("TRIPLE_NATIVE_PACKAGED_CLI_2_0_32_TWO_WORKSPACES_ROLLBACK_PASS")
   }
 } finally {
+  if (disposableServiceStarted) {
+    try { cli(["service", "stop"], projects[0]) }
+    catch (error) { console.warn(`Isolated CI service stop failed: ${error.message}`) }
+  }
   rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 })
 }

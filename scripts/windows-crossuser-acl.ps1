@@ -36,7 +36,7 @@ try {
   $svc.Connect()
   $root = $svc.GetFolder('\')
   try { $null = $svc.GetFolder('\OpenCode'); throw 'Existing \OpenCode Task Scheduler folder: refusing modification' }
-  catch [System.Runtime.InteropServices.COMException] {
+  catch {
     $hresult = '{0:X8}' -f ($_.Exception.HResult -band 0xFFFFFFFF)
     if ($hresult -notin @('80070002', '80070003')) { throw }
   }
@@ -107,7 +107,7 @@ try {
       if ($current.Definition.Principal.UserId -ne $principalName) { throw 'Foreign task principal changed' }
       $folder.DeleteTask($leaf, 0)
       try { $null = $folder.GetTask($leaf); throw 'Task survived cleanup' }
-      catch [System.Runtime.InteropServices.COMException] {
+      catch {
         $hresult = '{0:X8}' -f ($_.Exception.HResult -band 0xFFFFFFFF)
         if ($hresult -notin @('80070002', '80070003')) { throw }
       }

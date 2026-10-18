@@ -114,7 +114,10 @@ export function previewLegacyMigration(archive: Archive): Candidate[] {
     let workdir: string | null = null
     if (typeof job?.workdir === "string" && path.isAbsolute(job.workdir) && job.workdir === job.workdir.trim()) {
       const normalized = path.resolve(job.workdir)
-      try { if (realpathSync(normalized) === normalized && lstatSync(normalized).isDirectory()) workdir = normalized } catch {}
+      // macOS legitimately aliases /var to /private/var. Reject a symlink
+      // at the workspace itself, while retaining the logical path the V2
+      // scope hash uses (also on systems with aliased parent directories).
+      try { if (lstatSync(normalized).isDirectory()) workdir = normalized } catch {}
     }
     const scope = workdir ? scopeId(workdir) : null
     const target = scope ? `scheduler/scopes/${scope}/jobs/${slug}.json` : null
@@ -136,7 +139,7 @@ function assertDestination(source: string, destination: string): void {
   const parent = path.dirname(destination)
   assertDir(parent)
   const realParent = realpathSync(parent)
-  const realSource = path.resolve(source)
+  const realSource = existsSync(source) ? realpathSync(source) : path.resolve(source)
   const rel = path.relative(realSource, realParent)
   if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) throw new Error("Never stage/restore inside source configuration")
 }
@@ -187,7 +190,7 @@ export function exportLegacyArchive(archive: Archive, file: string): void {
   if (!path.isAbsolute(file)) throw new Error("Export path must be absolute")
   assertDir(path.dirname(file))
   const parentReal = realpathSync(path.dirname(file))
-  const rel = path.relative(archive.sourceRoot, parentReal)
+  const rel = path.relative(realpathSync(archive.sourceRoot), parentReal)
   if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) throw new Error("Backup must be stored outside live configuration")
   const fd = openSync(file, "wx", 0o600)
   try { writeFileSync(fd, JSON.stringify(archive, null, 2)); fsyncSync(fd) }

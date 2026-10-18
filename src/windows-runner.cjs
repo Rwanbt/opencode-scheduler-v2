@@ -117,6 +117,24 @@ if (!invocation || typeof invocation.command !== "string" || !path.win32.isAbsol
   // A corrupted/legacy job must not run without a watchdog. Missing duration
   // is backward compatible but bounded; an explicit zero remains forbidden.
   finish("failed", 2, "unattended timeout must be 1–3600 seconds");
+} else if (!(() => {
+  // No official OpenCode CLI supports a certified aggregate token/spend cap.
+  // Only an expiring, hash-pinned zero-inference test fixture can execute.
+  const authority = job.executionAuthority;
+  const now = Date.now();
+  if (authority?.kind !== "isolated-no-inference-fixture" ||
+      authority.maxInferenceTokens !== 0 || authority.maxCostUsd !== 0 ||
+      !Number.isSafeInteger(authority.expiresAt) || authority.expiresAt < now ||
+      authority.expiresAt > now + 3600000 ||
+      !/^[a-f0-9]{64}$/.test(authority.executableSha256 ?? "") ||
+      !/^[a-f0-9]{64}$/.test(authority.invocationSha256 ?? "")) return false;
+  try {
+    const actual = createHash("sha256").update(fs.readFileSync(invocation.command)).digest("hex");
+    const argvHash = createHash("sha256").update(JSON.stringify(invocation.args)).digest("hex");
+    return actual === authority.executableSha256 && argvHash === authority.invocationSha256;
+  } catch { return false; }
+})()) {
+  finish("failed", 77, "no verified zero-inference authority; token/cost budgets cannot be enforced");
 } else {
   // Noninteractive policy: deny questions, write tools, and shells by default.
   // A user can create more privileged jobs only through an explicit change.

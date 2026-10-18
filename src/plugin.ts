@@ -2,6 +2,7 @@ import { z } from "zod"
 import SchedulerPlugin from "./engine.js"
 import { runInProject } from "./scope.js"
 import { assertProjectToolScope } from "./policy.js"
+import { assertNativeExecutionAuthority } from "./execution-authority.js"
 
 type ToolEditor = { add(definition: {
   name: string
@@ -49,6 +50,7 @@ export const SchedulerPluginV2 = {
           input,
           execute: async (args, toolContext) => runInProject(project, async () => {
             assertProjectToolScope(name, args, project)
+            assertNativeExecutionAuthority(name)
             const result = await definition.execute(args as never, toolContext as never)
             if (typeof result === "string") return { content: result }
             if (result && typeof result === "object" && "output" in result && typeof result.output === "string") {

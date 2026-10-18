@@ -2,7 +2,7 @@
 
 This fork ports Scheduler to **OpenCode 2.x** and includes a locally audited copy of the MIT-licensed `different-ai/opencode-scheduler` 1.3.0 scheduling engine, originally at commit `cd0b62364792f53e8687db53bc2c2c0261c9cf17`. Unlike the original thin V2 adapter, the engine in this repository can be patched and versioned independently of upstream 1.3.0.
 
-**Current version: `@rwanbt/opencode-scheduler-v2@0.2.0-rwanbt.5` — development / Draft review, not production certified.**
+**Current version: `@rwanbt/opencode-scheduler-v2@0.2.0-rwanbt.6` — development / Draft review, not production certified.**
 
 ## Key fixes
 
@@ -10,6 +10,7 @@ This fork ports Scheduler to **OpenCode 2.x** and includes a locally audited cop
 - **Workspace scoping:** every tool executes in its native OpenCode project context using AsyncLocalStorage rather than depending on a process-wide `process.cwd()`. This avoids jobs disappearing when a shared Desktop server serves several projects.
 - **Canonical workspace authority:** real paths must match the active project, including across symbolic links/junctions; inaccessible projects fail closed.
 - **Bounded unattended execution:** new jobs default to 1,800 seconds; explicit zero, negative, invalid or greater-than-one-hour limits are refused by native scheduling tools. The Windows runner also rejects unsafe stored durations and bounds legacy jobs that omit them. This bounds runtime, **not tokens or inference spend**.
+- **Default-deny inference budget authority:** because the official OpenCode CLI has no enforced per-job aggregate token/spend budget contract, `schedule_job`, `update_job`, and `run_job` now refuse real inference; read-only tools and `delete_job` remain accessible. Persistent Windows and POSIX runners reject legacy/unapproved jobs **before model spawn**. Ephemeral CI-only non-inference fixtures require an explicit harness acknowledgement, expiry, pinned executable SHA-256, and hard zero-token/zero-cost annotation. This test mechanism is **not a production budget broker**. Live production scheduling remains blocked until a real enforceable budget authority is integrated.
 - **Windows native CLI:** searches for an actual absolute `opencode.exe`, or for a *single unambiguous* versioned `opencode-cli.exe` installed by OpenCode Desktop. Command shims (`.cmd`) are rejected. Override explicitly with `OPENCODE_SCHEDULER_OPENCODE_PATH` when more than one CLI exists.
 - **Windows Task Scheduler:** validates representable cron schedules, resolves an absolute Node runner, and refuses overlong `/TR` actions. The runner reads a scoped job, enforces an atomic one-job-at-a-time lock, noninteractive permissions, timeout, logs, and durable exit status. For `node.exe` resolution, use `OPENCODE_SCHEDULER_NODE_PATH` if the Node binary is not on PATH.
 - **Linux/systemd portability:** fixes wildcard-weekday `OnCalendar` generation, resolves Perl without assuming `/usr/bin/perl`, and preserves environment-specific PATH entries (including Nix/NixOS).
